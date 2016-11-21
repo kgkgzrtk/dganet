@@ -12,7 +12,7 @@ W_RANGE = [128, 64, 32, 16]
 CH_RANGE = [3, 16, 32, 64]
 BAT_SIZE = 10
 
-# データのインプット
+# input image data
 train_image = []
 train_depth = []
 
@@ -145,12 +145,10 @@ def gen_image(result):
 
 
 with tf.Graph().as_default():
-    #入力用のプレースホルダー(実行時に入力する変数)の定義
-    # 画像枚数はどんな値でも入れられるようにNone(指定しない)にしておく、 28×28ピクセル = 784次元という意味
-    x = tf.placeholder("float", [None, IMAGE_SIZE * 3], name="x")
 
-    # 正しい値を入力するためのプレースホルダー
+    x = tf.placeholder("float", [None, IMAGE_SIZE * 3], name="x")
     y_ = tf.placeholder("float", [None, IMAGE_SIZE], name="y_")
+
     y_shaped = tf.reshape(y_, [BAT_SIZE, IMAGE_H, IMAGE_W, 1])
 
     result = inference(x)
