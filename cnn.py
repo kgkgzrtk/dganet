@@ -177,7 +177,8 @@ with tf.Graph().as_default():
     d_train_op = d_train(d_loss)
 
     loss = loss(y, y_)
-    train_op = training(loss + 1e-7*(1./(d_loss+1e-12)))
+    alpha = 0.2
+    train_op = training( loss /(alpha + d_loss) )
 
     saver = tf.train.Saver()
     summary_op = tf.merge_all_summaries()
