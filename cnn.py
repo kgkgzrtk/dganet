@@ -191,7 +191,7 @@ with tf.Graph().as_default():
         summary_writer = tf.train.SummaryWriter("tmp/testlog", sess.graph_def)
         sess.run(init)
  
-        # 学習
+        # train
         batch_size = 10
         for step in range(15000):
             for i in range(len(train_image)/batch_size):
@@ -208,7 +208,7 @@ with tf.Graph().as_default():
 
             if step % 10 == 0:
                 feed = {x: train_image[:batch_size], y_: train_depth[:batch_size]}
-                # 結果を出力
+                # output results
                 result = sess.run([summary_op, loss, d_loss, acc], feed_dict=feed)
                 print("loss at step %s: %.10f" % (step, result[1]))
                 print("d_loss : %.10f" % result[2])
