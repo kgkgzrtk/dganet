@@ -29,13 +29,13 @@ for i in range(848):
 train_image = np.asarray(train_image)
 train_depth = np.asarray(train_depth)
 
-def b_n(input):
-    shape = input.get_shape().dims[-1].value
+def b_n(input_):
+    shape = input_.get_shape().dims[-1].value
     eps = 1e-5
     gamma = tf.Variable(tf.truncated_normal([shape], stddev=0.1))
     beta = tf.Variable(tf.truncated_normal([shape], stddev=0.1))
-    mean, variance = tf.nn.moments(input, [0])
-    return gamma * (input - mean) / tf.sqrt(variance + eps) + beta
+    mean, variance = tf.nn.moments(input_, [0])
+    return gamma * (input_ - mean) / tf.sqrt(variance + eps) + beta
 
 def lrelu(x, leak=0.2, name="lrelu"):
     return tf.maximum(x, leak*x)
@@ -64,23 +64,29 @@ def deconv(image, output_shape, name, c=5, k=2, stddev=0.02):
         y = tf.nn.deconv2d(image, W, output_shape=output_shape, strides=[1,k,k,1], padding='SAME') + b
         return b_n(y)
 
-def discriminator(image):
+def discriminator(image, depth):
     dim = 16
     with tf.name_scope('discriminator') as scope:
+        image = tf.reshape(image, [-1, IMAGE_H, IMAGE_W, 3])
         h0 = lrelu(conv(image, dim, k=2, name='h0_conv'))
         h1 = lrelu(conv(h0, dim*2, k=2, name='h1_conv'))
-        h2 = lrelu(conv(h0, dim*4, k=2, name='h2_conv'))
-        h3 = lrelu(conv(h0, dim*8, k=2, name='h3_conv'))
-        h4 = linear(tf.reshape(h3,[BAT_SIZE, -1]), BAT_SIZE)
-        return tf.nn.sigmoid(h4)
+        h2 = lrelu(conv(h1, dim*4, k=2, name='h2_conv'))
 
-def inference(input_ph):
+        l0 = lrelu(conv(depth, dim, k=2, name='l0_conv'))
+        l1 = lrelu(conv(l0, dim*2, k=2, name='l1_conv'))
+        l2 = lrelu(conv(l1, dim*4, k=2, name='l2_conv'))
+        
+        hl0 = tf.concat(3,[h2,l2])
+        hl1 = lrelu(conv(hl0, dim*8, k=2, name='hl1_conv'))
+        hl2 = linear(tf.reshape(hl1,[BAT_SIZE, -1]), BAT_SIZE)
+        return tf.nn.sigmoid(hl2)
+
+def inference(input_):
     with tf.name_scope('inference') as scope:
 
-        input_mat = tf.reshape(input_ph, [-1, IMAGE_H, IMAGE_W, 3])
-
+        input_ = tf.reshape(input_, [BAT_SIZE, IMAGE_H, IMAGE_W, 3])
         #convolutional layers
-        y_c0 = tf.nn.relu(conv(input_mat, CH_RANGE[1], name='c0'))
+        y_c0 = tf.nn.relu(conv(input_, CH_RANGE[1], name='c0'))
         y_p0 = pool(y_c0)
         y_c1 = tf.nn.relu(conv(y_p0, CH_RANGE[2], name='c1'))
         y_p1 = pool(y_c1)
@@ -91,18 +97,18 @@ def inference(input_ph):
         #generator
         y_dc0 = tf.nn.relu(deconv(y_p3, [BAT_SIZE, W_RANGE[2], W_RANGE[2], CH_RANGE[2]], c=3, name='dc0'))
         y_dc1 = tf.nn.relu(deconv(y_dc0, [BAT_SIZE, W_RANGE[1], W_RANGE[1], CH_RANGE[1]], c=5, name='dc1'))
-        y_in = y_dc1 + y_p0
+        y_in = tf.concat(3, [y_dc1, y_p0])
         y_dc2 = tf.nn.relu(deconv(y_in, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], c=5, name='dc2'))
         
         return {'y_p0':y_p0, 'y_p1':y_p1, 'y_p3':y_p3, 'y_dc0':y_dc0, 'y_dc1':y_dc1,'y_dc2':y_dc2}
 
 
-def loss(y, y_):
+def loss(h, h_):
     with tf.name_scope('loss') as scope:
-        y_shaped = tf.reshape(y_, [-1, IMAGE_H, IMAGE_W, 1])
-        pow2_loss = tf.nn.l2_loss(y_shaped - y )
-        tf.scalar_summary("loss", pow2_loss)
-    return pow2_loss
+        zero_h = tf.zeros_like(h_)
+        _loss = tf.reduce_mean(- (zero_h * tf.log(h + 1e-12) + (1. - zero_h) * tf.log(1. - h + 1e-12)))
+        tf.scalar_summary("loss", _loss)
+    return _loss
 
 def desc_loss(h, h_):
     with tf.name_scope('d_loss') as scope:
@@ -113,16 +119,16 @@ def desc_loss(h, h_):
     return cross_entropy, accuracy
 
 
-def training(loss):
+def g_train(g_loss):
     with tf.name_scope('training') as scope:
         i_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='inference')
-        train_step = tf.train.AdamOptimizer(0.0002).minimize(loss, var_list=i_vars)
+        train_step = tf.train.AdamOptimizer(3e-4).minimize(g_loss, var_list=i_vars)
     return train_step
 
 def d_train(d_loss):
     with tf.name_scope('d_train') as scope:
         d_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='discriminator')
-        train_step = tf.train.AdamOptimizer(0.0002).minimize(d_loss, var_list=d_vars)
+        train_step = tf.train.AdamOptimizer(3e-4).minimize(d_loss, var_list=d_vars)
     return train_step
 
 def gen_image(result):
@@ -149,15 +155,15 @@ with tf.Graph().as_default():
     x = tf.placeholder("float", [None, IMAGE_SIZE * 3], name="x")
     y_ = tf.placeholder("float", [None, IMAGE_SIZE], name="y_")
 
-    y_shaped = tf.reshape(y_, [BAT_SIZE, IMAGE_H, IMAGE_W, 1])
+    y_ph = tf.reshape(y_, [BAT_SIZE, IMAGE_H, IMAGE_W, 1])
 
     result = inference(x)
-    y = result['y_dc2']
+    y_out = result['y_dc2']
     
     rf = []
     label = []
-    real = [tf.squeeze(ys, [0]) for ys in tf.split(0, BAT_SIZE, y_shaped)]
-    fake = [tf.squeeze(yf, [0]) for yf in tf.split(0, BAT_SIZE, y)]
+    real = [tf.squeeze(ys, [0]) for ys in tf.split(0, BAT_SIZE, y_ph)]
+    fake = [tf.squeeze(yf, [0]) for yf in tf.split(0, BAT_SIZE, y_out)]
     n = np.random.uniform(-1,1,BAT_SIZE)
     for i in range(BAT_SIZE):
         if n[i] > 0.:
@@ -166,25 +172,24 @@ with tf.Graph().as_default():
         else:
             rf.append(fake[i])
             label.append(1.)
-    d_in = tf.pack(rf)
-    h_ = tf.pack(label)
 
-    h = discriminator(d_in)
+    sample = tf.pack(rf)
+
+    h_ = tf.pack(label)
+    h = discriminator(x, smple)
 
     
     d_loss, acc = desc_loss(h, h_)
-    
-    d_train_op = d_train(d_loss)
+    g_loss = g_loss(h, h_)
 
-    loss = loss(y, y_)
-    alpha = 0.2
-    train_op = training( loss /(alpha + d_loss) )
+    d_train_op = d_train(d_loss)
+    train_op = g_train(g_loss)
 
     saver = tf.train.Saver()
     summary_op = tf.merge_all_summaries()
     
     images = gen_image(result)
-    res_image = gen_image(dict(zip(range(0,9), [y_shaped])))
+    res_image = gen_image(dict(zip(range(0,9), [y_ph])))
 
     init = tf.initialize_all_variables()
 
@@ -210,7 +215,7 @@ with tf.Graph().as_default():
             if step % 10 == 0:
                 feed = {x: train_image[:batch_size], y_: train_depth[:batch_size]}
                 # output results
-                result = sess.run([summary_op, loss, d_loss, acc], feed_dict=feed)
+                result = sess.run([summary_op, g_loss, d_loss, acc], feed_dict=feed)
                 print("loss at step %s: %.10f" % (step, result[1]))
                 print("d_loss : %.10f" % result[2])
                 print("accuracy : %f" % result[3])
