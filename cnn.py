@@ -110,7 +110,7 @@ def inference(input_):
 
 def loss(y, y_):
     with tf.name_scope('loss') as scope:
-        loss = tf.nn.l2_loss(y - y_) + tf.add_n(tf.get_collection('w_loss'))
+        loss = tf.nn.l2_loss(y - y_) # + tf.add_n(tf.get_collection('w_loss'))
         tf.scalar_summary("loss", loss)
     return loss
         
