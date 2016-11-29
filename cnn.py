@@ -31,10 +31,10 @@ train_depth = np.asarray(train_depth)
 
 def b_n(input_):
     shape = input_.get_shape().dims[-1].value
-    eps = 1e-5
-    gamma = tf.Variable(tf.truncated_normal([shape], stddev=0.1))
-    beta = tf.Variable(tf.truncated_normal([shape], stddev=0.1))
-    mean, variance = tf.nn.moments(input_, [0])
+    eps = 1e-12
+    gamma = tf.Variable(tf.ones([shape]))
+    beta = tf.Variable(tf.zeros([shape]))
+    mean, variance = tf.nn.moments(input_, [0, 1, 2])
     return gamma * (input_ - mean) / tf.sqrt(variance + eps) + beta
 
 def lrelu(x, leak=0.2, name="lrelu"):
@@ -51,7 +51,7 @@ def conv(image, out_dim, name, c=5, k=1, stddev=0.02, wd=0.0):
     with tf.name_scope(name) as scope:
         W = tf.Variable(tf.truncated_normal([c, c, image.get_shape().dims[-1].value, out_dim], stddev=stddev))
         b = tf.Variable(tf.constant(0.0, shape=[out_dim]))
-        y = tf.nn.conv2d(image, W, strides=[1, k, k, 1], padding='SAME') + b
+        y = tf.nn.conv2d(image, W, strides=[1, k, k, 1], padding='SAME')+b
         if wd:
             weight_decay = tf.mul(tf.nn.l2_loss(W), wd, name='weight_loss')
             tf.add_to_collection('w_loss', weight_decay)
@@ -68,7 +68,7 @@ def deconv(image, output_shape, name, c=5, k=2, stddev=0.02):
         return b_n(y)
 
 def discriminator(image, depth):
-    dim = 5
+    dim = 3
     with tf.name_scope('disc') as scope:
         image = tf.reshape(image, [-1, IMAGE_H, IMAGE_W, 3])
         h0 = lrelu(conv(image, dim, k=2, name='h0_conv'))
