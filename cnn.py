@@ -102,8 +102,7 @@ def inference(input_):
         #generator
         y_dc0 = tf.nn.relu(deconv(y_p3, [BAT_SIZE, W_RANGE[2], W_RANGE[2], CH_RANGE[2]], c=3, name='dc0'))
         y_dc1 = tf.nn.relu(deconv(y_dc0, [BAT_SIZE, W_RANGE[1], W_RANGE[1], CH_RANGE[1]], c=5, name='dc1'))
-        y_in = tf.concat(3, [y_dc1, y_p0])
-        y_dc2 = tf.nn.relu(deconv(y_in, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], c=5, name='dc2'))
+        y_dc2 = tf.nn.relu(deconv(y_dc1, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], c=5, name='dc2'))
         
         return {'y_p0':y_p0, 'y_p1':y_p1, 'y_p3':y_p3, 'y_dc0':y_dc0, 'y_dc1':y_dc1,'y_dc2':y_dc2}
 
