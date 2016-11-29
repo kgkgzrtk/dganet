@@ -68,7 +68,7 @@ def deconv(image, output_shape, name, c=5, k=2, stddev=0.02):
         return b_n(y)
 
 def discriminator(image, depth):
-    dim = 16
+    dim = 5
     with tf.name_scope('disc') as scope:
         image = tf.reshape(image, [-1, IMAGE_H, IMAGE_W, 3])
         h0 = lrelu(conv(image, dim, k=2, name='h0_conv'))
