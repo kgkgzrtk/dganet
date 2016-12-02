@@ -7,7 +7,7 @@ IMAGE_H = 128
 IMAGE_W = 128
 IMAGE_SIZE = IMAGE_H*IMAGE_W
 
-IMAGE_KEY = ['y_p0', 'y_p1', 'y_p3', 'y_dc0','y_dc1', 'y_dc2']
+IMAGE_KEY = ['y_p0', 'y_p2', 'y_p3', 'y_dc0','y_dc1', 'y_dc2']
 W_RANGE = [128, 64, 32, 16]
 CH_RANGE = [3, 16, 32, 64]
 BAT_SIZE = 10
@@ -68,19 +68,17 @@ def deconv(image, output_shape, name, c=5, k=2, stddev=0.02):
         return b_n(y)
 
 def discriminator(image, depth):
-    dim = 3
+    dim = 12
     with tf.name_scope('disc') as scope:
         image = tf.reshape(image, [-1, IMAGE_H, IMAGE_W, 3])
         h0 = lrelu(conv(image, dim, k=2, name='h0_conv'))
         h1 = lrelu(conv(h0, dim*2, k=2, name='h1_conv'))
-        h2 = lrelu(conv(h1, dim*4, k=2, name='h2_conv'))
 
         l0 = lrelu(conv(depth, dim, k=2, name='l0_conv'))
         l1 = lrelu(conv(l0, dim*2, k=2, name='l1_conv'))
-        l2 = lrelu(conv(l1, dim*4, k=2, name='l2_conv'))
         
-        hl0 = tf.concat(3,[h2,l2])
-        hl1 = lrelu(conv(hl0, dim*8, k=2, name='hl1_conv'))
+        hl0 = tf.concat(3,[h1,l1])
+        hl1 = lrelu(conv(hl0, dim*4, k=2, name='hl1_conv'))
         hl2 = linear(tf.reshape(hl1,[BAT_SIZE, -1]), BAT_SIZE)
         return tf.nn.sigmoid(hl2)
 
@@ -88,23 +86,24 @@ def discriminator(image, depth):
 def inference(input_):
     with tf.name_scope('conv') as scope:
         wd = 0.0
+        dim = 12
         input_ = tf.reshape(input_, [BAT_SIZE, IMAGE_H, IMAGE_W, 3])
         #convolutional layers
-        y_c0 = tf.nn.relu(conv(input_, CH_RANGE[1], name='c0', wd=wd))
+        y_c0 = tf.nn.relu(conv(input_, dim, name='c0', wd=wd))
         y_p0 = pool(y_c0)
-        y_c1 = tf.nn.relu(conv(y_p0, CH_RANGE[2], name='c1', wd=wd))
-        y_p1 = pool(y_c1)
-        y_c2 = tf.nn.relu(conv(y_p1, CH_RANGE[2], name='c2', wd=wd))
-        y_c3 = tf.nn.relu(conv(y_c2, CH_RANGE[3], c=3, name='c3', wd=wd))
+        y_c1 = tf.nn.relu(conv(y_p0, dim * 2, name='c1', wd=wd))
+        y_c2 = tf.nn.relu(conv(y_c1, dim * 2, name='c2', wd=wd))
+        y_p2 = pool(y_c2)
+        y_c3 = tf.nn.relu(conv(y_p2, dim * 4, name='c3', wd=wd))
         y_p3 = pool(y_c3)
 
     with tf.name_scope('gen') as scope:
         #generator
-        y_dc0 = tf.nn.relu(deconv(y_p3, [BAT_SIZE, W_RANGE[2], W_RANGE[2], CH_RANGE[2]], c=3, name='dc0'))
-        y_dc1 = tf.nn.relu(deconv(y_dc0, [BAT_SIZE, W_RANGE[1], W_RANGE[1], CH_RANGE[1]], c=5, name='dc1'))
-        y_dc2 = tf.nn.relu(deconv(y_dc1, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], c=5, name='dc2'))
+        y_dc0 = tf.nn.relu(deconv(y_p3, [BAT_SIZE, W_RANGE[2], W_RANGE[2], dim * 2], c=3, name='dc0'))
+        y_dc1 = tf.nn.relu(deconv(y_dc0, [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim], c=5, name='dc1'))
+        y_dc2 = tf.nn.sigmoid(deconv(y_dc1, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], c=5, name='dc2'))
         
-        return {'y_p0':y_p0, 'y_p1':y_p1, 'y_p3':y_p3, 'y_dc0':y_dc0, 'y_dc1':y_dc1,'y_dc2':y_dc2}
+        return {'y_p0':y_p0, 'y_p2':y_p2, 'y_p3':y_p3, 'y_dc0':y_dc0, 'y_dc1':y_dc1,'y_dc2':y_dc2}
 
 
 def loss(y, y_):
