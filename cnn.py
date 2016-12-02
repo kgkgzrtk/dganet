@@ -152,7 +152,7 @@ def gen_image(result):
         size = y.get_shape().dims[1].value
         ch = y.get_shape().dims[3].value
 
-        row = col = 1
+        row = col = np.trunc(np.sqrt(BAT_SIZE)).astype(np.int32)
         images = tf.cast(tf.mul(y,255.), tf.uint8)
         images = [tf.squeeze(image, [3]) for image in tf.split(3, ch, images)]
         images = tf.reshape(images[0], [BAT_SIZE, size, size, 1])
@@ -217,14 +217,13 @@ with tf.Graph().as_default():
         batch_size = 10
         k = 100
         for step in range(15000):
+            batch = batch_size*i
+            train_feed = {x: train_image[batch:batch+batch_size],
+                          y_: train_depth[batch:batch+batch_size]}
+            test_feed = {x: train_image[:batch_size], y_: train_depth[:batch_size]}
+
             for i in range(len(train_image)/batch_size):
-                batch = batch_size*i
-                feed = {x: train_image[batch:batch+batch_size],
-                        y_: train_depth[batch:batch+batch_size]}
-                if step % k == 0:
-                    sess.run([train_op, g_train_op, d_train_op], feed_dict = feed)
-                else:
-                    sess.run([train_op, g_train_op], feed_dict = feed)
+                sess.run([train_op, g_train_op], feed_dict = train_feed)
             
             if step == 0:
                 res = sess.run(res_image, {y_: train_depth[:batch_size]})
@@ -233,9 +232,11 @@ with tf.Graph().as_default():
                         f.write(res[j])
 
             if step % 10 == 0:
-                feed = {x: train_image[:batch_size], y_: train_depth[:batch_size]}
+                result = sess.run([summary_op, loss, g_loss, d_loss, acc], feed_dict = test_feed)
+                if result[4] < 0.7:
+                    sess.run([train_op, g_train_op, d_train_op], feed_dict = train_feed)
+
                 # output results
-                result = sess.run([summary_op, loss, g_loss, d_loss, acc], feed_dict=feed)
                 print("loss at step %s: %.10f" % (step, result[1]))
                 print("g_loss : %.10f" % result[2])
                 print("d_loss : %.10f" % result[3])
