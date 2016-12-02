@@ -215,12 +215,16 @@ with tf.Graph().as_default():
  
         # train
         batch_size = 10
+        k = 100
         for step in range(15000):
             for i in range(len(train_image)/batch_size):
                 batch = batch_size*i
                 feed = {x: train_image[batch:batch+batch_size],
                         y_: train_depth[batch:batch+batch_size]}
-                sess.run([train_op, g_train_op, d_train_op], feed_dict = feed)
+                if step % k == 0:
+                    sess.run([train_op, g_train_op, d_train_op], feed_dict = feed)
+                else:
+                    sess.run([train_op, g_train_op], feed_dict = feed)
             
             if step == 0:
                 res = sess.run(res_image, {y_: train_depth[:batch_size]})
