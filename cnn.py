@@ -65,7 +65,7 @@ def deconv(image, output_shape, name, c=5, k=2, stddev=0.02):
         W = tf.Variable(tf.truncated_normal([c, c, output_shape[-1], image.get_shape().dims[-1].value], stddev=0.02))    
         b = tf.Variable(tf.constant(0.0, shape=[output_shape[-1]]))
         y = tf.nn.deconv2d(image, W, output_shape=output_shape, strides=[1,k,k,1], padding='SAME') + b
-        return b_n(y)
+        return y
 
 def discriminator(image, depth):
     dim = 12
@@ -120,7 +120,7 @@ def gen_loss(h, h_):
         tf.scalar_summary("g_entropy", g_entropy)
     return g_entropy
 
-def desc_loss(h, h_):
+def disc_loss(h, h_):
     with tf.name_scope('d_loss') as scope:
         d_entropy = tf.reduce_mean(- (h_ * tf.log(h + 1e-12) + (1. - h_) * tf.log(1. - h + 1e-12)))
         tf.scalar_summary("d_entropy", d_entropy)
@@ -131,7 +131,8 @@ def desc_loss(h, h_):
 def train(loss):
     with tf.name_scope('train') as scope:
         c_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='conv')
-        train_step = tf.train.AdamOptimizer(3e-4).minimize(loss, var_list=c_vars)
+        g_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='gen')
+        train_step = tf.train.AdamOptimizer(3e-4).minimize(loss, var_list=list(c_vars + g_vars))
     return train_step
 
 def g_train(g_loss):
@@ -194,7 +195,7 @@ with tf.Graph().as_default():
     h = discriminator(x, sample)
 
     loss = loss(y_out, y_ph)
-    d_loss, acc = desc_loss(h, h_)
+    d_loss, acc = disc_loss(h, h_)
     g_loss = gen_loss(h, h_)
 
     train_op = train(loss) 
@@ -215,16 +216,25 @@ with tf.Graph().as_default():
  
         # train
         batch_size = 10
-        k = 100
-        for step in range(15000):
+        train_flag = 0
+        for step in range(20000):
             batch = batch_size*i
             train_feed = {x: train_image[batch:batch+batch_size],
                           y_: train_depth[batch:batch+batch_size]}
             test_feed = {x: train_image[:batch_size], y_: train_depth[:batch_size]}
-
-            for i in range(len(train_image)/batch_size):
-                sess.run([train_op, g_train_op], feed_dict = train_feed)
             
+            for i in range(len(train_image)/batch_size):
+                if train_flag == 0:
+                    train_res = sess.run(train_op, feed_dict = train_feed)
+                    if step > 8000:
+                        print "----------------* cnn_train finished *----------------"
+                        print("")
+                        train_flag = 1
+                else:
+                    train_res = sess.run([g_train_op, acc], feed_dict = train_feed)
+                    if train_res[1] < 0.8:
+                        sess.run(d_train_op, feed_dict = train_feed)
+
             if step == 0:
                 res = sess.run(res_image, {y_: train_depth[:batch_size]})
                 for j in range(len(res)):
@@ -232,16 +242,17 @@ with tf.Graph().as_default():
                         f.write(res[j])
 
             if step % 10 == 0:
-                result = sess.run([summary_op, loss, g_loss, d_loss, acc], feed_dict = test_feed)
-                if result[4] < 0.7:
-                    sess.run([train_op, g_train_op, d_train_op], feed_dict = train_feed)
-
                 # output results
-                print("loss at step %s: %.10f" % (step, result[1]))
-                print("g_loss : %.10f" % result[2])
-                print("d_loss : %.10f" % result[3])
-                print("accuracy : %f" % result[4])
-                print("")
+                if train_flag == 0:
+                    result = sess.run([summary_op, loss], feed_dict = test_feed)
+                    print("loss at step %s: %.10f" % (step, result[1]))
+                else:
+                    result = sess.run([summary_op, loss, g_loss, d_loss, acc], feed_dict = test_feed)
+                    print("loss at step %s: %.10f" % (step, result[1]))
+                    print("g_loss : %.10f" % result[2])
+                    print("d_loss : %.10f" % result[3])
+                    print("accuracy : %f" % result[4])
+                    print("")
                 summary_str = sess.run(summary_op,{x: train_image[:10], y_:train_depth[:10]})
                 summary_writer.add_summary(summary_str,step)
             
@@ -253,4 +264,4 @@ with tf.Graph().as_default():
                         f.write(res[j])
         
         save_path = saver.save(sess, "CDC_I-O_128.model")
-        sess.close() 
+        sess.cllose() 
