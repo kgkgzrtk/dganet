@@ -7,7 +7,8 @@ IMAGE_H = 128
 IMAGE_W = 128
 IMAGE_SIZE = IMAGE_H*IMAGE_W
 
-IMAGE_KEY = ['y_p0', 'y_p2', 'y_p3', 'y_dc0','y_dc1', 'y_dc2']
+IMAGE_KEYS = ['y_p1','y_p2' ,'y_p3' ,'y_dc0' ,'y_dc1', 'y_dc2', 'y_dc3', 'y_in']
+
 W_RANGE = [128, 64, 32, 16]
 CH_RANGE = [3, 16, 32, 64]
 BAT_SIZE = 10
@@ -47,7 +48,7 @@ def linear(input_, output_size, stddev=0.02):
     bias = tf.Variable(tf.constant(0.0, shape=[output_size]))
     return tf.matmul(input_, matrix) + bias
 
-def conv(image, out_dim, name, c=5, k=1, stddev=0.02, wd=0.0):
+def conv(image, out_dim, name, c=5, k=1, stddev=0.02, wd=0.001):
     with tf.name_scope(name) as scope:
         W = tf.Variable(tf.truncated_normal([c, c, image.get_shape().dims[-1].value, out_dim], stddev=stddev))
         b = tf.Variable(tf.constant(0.0, shape=[out_dim]))
@@ -60,11 +61,14 @@ def conv(image, out_dim, name, c=5, k=1, stddev=0.02, wd=0.0):
 def pool(x, k=2):
     return tf.nn.max_pool(x, ksize=[1, k, k, 1], strides=[1, 2, 2, 1], padding='SAME')
 
-def deconv(image, output_shape, name, c=5, k=2, stddev=0.02):
+def deconv(image, output_shape, name, c=5, k=2, stddev=0.02, wd=0.001):
     with tf.name_scope(name) as scope:
         W = tf.Variable(tf.truncated_normal([c, c, output_shape[-1], image.get_shape().dims[-1].value], stddev=0.02))    
         b = tf.Variable(tf.constant(0.0, shape=[output_shape[-1]]))
         y = tf.nn.deconv2d(image, W, output_shape=output_shape, strides=[1,k,k,1], padding='SAME') + b
+        if wd:
+            weight_decay = tf.mul(tf.nn.l2_loss(W), wd, name='weight_loss')
+            tf.add_to_collection('w_loss', weight_decay)
         return y
 
 def discriminator(image, depth):
@@ -86,7 +90,7 @@ def discriminator(image, depth):
 def inference(input_):
     with tf.name_scope('conv') as scope:
         wd = 0.0
-        dim = 12
+        dim = 16
         input_ = tf.reshape(input_, [BAT_SIZE, IMAGE_H, IMAGE_W, 3])
         #convolutional layers
         y_c0 = tf.nn.relu(conv(input_, dim, name='c0', wd=wd))
@@ -99,16 +103,18 @@ def inference(input_):
 
     with tf.name_scope('gen') as scope:
         #generator
-        y_dc0 = tf.nn.relu(deconv(y_p3, [BAT_SIZE, W_RANGE[2], W_RANGE[2], dim * 2], c=3, name='dc0'))
-        y_dc1 = tf.nn.relu(deconv(y_dc0, [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim], c=5, name='dc1'))
-        y_dc2 = tf.nn.sigmoid(deconv(y_dc1, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], c=5, name='dc2'))
+        y_dc0 = tf.nn.relu(deconv(y_p3, [BAT_SIZE, W_RANGE[2], W_RANGE[2], dim * 2], c=3, name='dc0')))
+        y_dc1 = tf.nn.relu(deconv(y_dc0, [BAT_SIZE, W_RANGE[2], W_RANGE[2], dim], c=5, k=1, name='dc1')))
+        y_dc2 = tf.nn.relu(deconv(y_dc1, [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim], c=5, name='dc2')))
+        y_in = b_n(y_dc2 + y_p0)
+        y_dc3 = tf.nn.sigmoid(deconv(y_in, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], c=5, name='dc3'))
         
-        return {'y_p0':y_p0, 'y_p2':y_p2, 'y_p3':y_p3, 'y_dc0':y_dc0, 'y_dc1':y_dc1,'y_dc2':y_dc2}
+        return {'y_p0':y_p0, 'y_p2':y_p2, 'y_p3':y_p3, 'y_dc0':y_dc0, 'y_dc1':y_dc1, 'y_in':y_in, 'y_dc2':y_dc2, 'y_dc3':y_dc3}
 
 
 def loss(y, y_):
     with tf.name_scope('loss') as scope:
-        loss = tf.nn.l2_loss(y - y_) # + tf.add_n(tf.get_collection('w_loss'))
+        loss = tf.nn.l2_loss(y - y_) + tf.add_n(tf.get_collection('w_loss'))
         tf.scalar_summary("loss", loss)
     return loss
         
@@ -174,7 +180,7 @@ with tf.Graph().as_default():
     y_ph = tf.reshape(y_, [BAT_SIZE, IMAGE_H, IMAGE_W, 1])
 
     result = inference(x)
-    y_out = result['y_dc2']
+    y_out = result['y_dc3']
     
     rf = []
     label = []
@@ -235,12 +241,6 @@ with tf.Graph().as_default():
                     if train_res[1] < 0.8:
                         sess.run(d_train_op, feed_dict = train_feed)
 
-            if step == 0:
-                res = sess.run(res_image, {y_: train_depth[:batch_size]})
-                for j in range(len(res)):
-                    with open("database/image/y_-%s.png" % (IMAGE_KEY[j]), 'wb') as f:
-                        f.write(res[j])
-
             if step % 10 == 0:
                 # output results
                 if train_flag == 0:
@@ -258,10 +258,10 @@ with tf.Graph().as_default():
             
             if step % 100 == 0:
                 num = step/100
-                res = sess.run(images, {x: train_image[:10], y_: train_depth[:batch_size]})
-                for j in range(len(res)):
-                    with open("database/image/result%s-%03d.png" % (IMAGE_KEY[j], num), 'wb') as f:
-                        f.write(res[j])
+                val = sess.run(images, {x: train_image[:10], y_: train_depth[:batch_size]})
+                for j in range(len(val)):
+                    with open("database/image/result%s-%03d.png" % (IMAGE_KEYS[j], num), 'wb') as f:
+                        f.write(val[j])
         
         save_path = saver.save(sess, "CDC_I-O_128.model")
         sess.cllose() 
