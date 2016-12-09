@@ -7,10 +7,10 @@ IMAGE_H = 128
 IMAGE_W = 128
 IMAGE_SIZE = IMAGE_H*IMAGE_W
 
-IMAGE_KEYS = ['y_p1','y_p2' ,'y_p3' ,'y_dc0' ,'y_dc1', 'y_dc2', 'y_dc3']
+IMAGE_KEYS = ['y_p0','y_p2' ,'y_p4' ,'y_dc0' ,'y_dc2', 'y_dc4', 'y_in']
 
-W_RANGE = [128, 64, 32, 16]
-CH_RANGE = [3, 16, 32, 64]
+W_RANGE = [128, 64, 32, 16, 8, 4]
+CH_RANGE = [3, 16, 32, 64, 128, 256]
 BAT_SIZE = 10
 
 # input image data
@@ -40,7 +40,8 @@ def b_n(input_):
     gamma = tf.Variable(tf.truncated_normal([shape], stddev=0.1))
     beta = tf.Variable(tf.truncated_normal([shape], stddev=0.1))
     mean, variance = tf.nn.moments(input_, [0, 1, 2])
-    return gamma * (input_ - mean) / tf.sqrt(variance + eps) + beta
+    #return gamma * (input_ - mean) / tf.sqrt(variance + eps) + beta
+    return input_
 
 def lrelu(x, leak=0.2, name="lrelu"):
     return tf.maximum(x, leak*x)
@@ -101,19 +102,25 @@ def inference(input_):
         y_c0 = tf.nn.relu(conv(input_, dim, name='c0'))
         y_p0 = pool(y_c0)
         y_c1 = tf.nn.relu(conv(y_p0, dim * 2, name='c1'))
-        y_c2 = tf.nn.relu(conv(y_c1, dim * 2, name='c2'))
+        y_p1 = pool(y_c1)
+        y_c2 = tf.nn.relu(conv(y_p1, dim * 4, name='c3'))
         y_p2 = pool(y_c2)
-        y_c3 = tf.nn.relu(conv(y_p2, dim * 4, name='c3'))
+        y_c3 = tf.nn.relu(conv(y_p2, dim * 8, name='c3'))
         y_p3 = pool(y_c3)
+        y_c4 = tf.nn.relu(conv(y_p3, dim * 16, name='c3'))
+        y_p4 = pool(y_c4)
 
     with tf.name_scope('gen') as scope:
         #generator
-        y_dc0 = tf.nn.relu(deconv(y_p3, [BAT_SIZE, W_RANGE[2], W_RANGE[2], dim * 2], c=3, name='dc0'))
-        y_dc1 = tf.nn.relu(deconv(y_dc0, [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim], c=5, name='dc2'))
-        y_dc2 = tf.nn.relu(deconv(tf.concat(3, [y_dc1, y_p0]), [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim], k=1, name='dcin'))
-        y_dc3 = tf.nn.sigmoid(deconv(y_dc2, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 3], c=5, name='dc3'))
+        y_dc0 = tf.nn.relu(deconv(y_p4, [BAT_SIZE, W_RANGE[4], W_RANGE[4], dim * 8], c=3, name='dc0'))
+        y_dc1 = tf.nn.relu(deconv(y_dc0, [BAT_SIZE, W_RANGE[3], W_RANGE[3], dim * 4], c=5, name='dc1'))
+        y_dc2 = tf.nn.relu(deconv(y_dc1, [BAT_SIZE, W_RANGE[2], W_RANGE[2], dim * 2], c=5, name='dc2'))
+        y_dc3 = tf.nn.relu(deconv(y_dc2, [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim], c=5, name='dc3'))
+        y_in = tf.nn.relu(deconv(tf.concat(3, [y_dc3, y_p0]), [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim], k=1, name='dcin'))
+        y_dc4 = tf.nn.sigmoid(deconv(y_in, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 3], c=5, name='dc4'))
         
-        return {'y_p0':y_p0, 'y_p2':y_p2, 'y_p3':y_p3, 'y_dc0':y_dc0, 'y_dc1':y_dc1, 'y_dc2':y_dc2, 'y_dc3':y_dc3}
+    y = [y_p0 ,y_p2, y_p4, y_dc0, y_dc2, y_dc4, y_in]
+    return dict(zip(IMAGE_KEYS, y))
 
 
 def loss(y, y_):
@@ -158,12 +165,12 @@ def d_train(d_loss):
     return train_step
 
 def gen_image(result):
-    encoded_image = []
-    for y in result.values():
-        size = y.get_shape().dims[1].value
-        ch = y.get_shape().dims[3].value
+    for key, val in result.items():
+        encoded_image = result
+        size = val.get_shape().dims[1].value
+        ch = val.get_shape().dims[3].value
         row = col = np.trunc(np.sqrt(BAT_SIZE)).astype(np.int32)
-        images = tf.cast(tf.mul(y, 255.), tf.uint8)
+        images = tf.cast(tf.mul(val, 255.), tf.uint8)
         if ch == 3:
             images = [tf.expand_dims(tf.squeeze(image, [3]), 3) for image in tf.split(3, 3, images)]
             images = tf.concat(3, [images[2], images[1], images[0]])
@@ -177,10 +184,8 @@ def gen_image(result):
         rows = []
         for i in range(row):
             rows.append(tf.concat(1,images[col * i + 0:col * i + col]))
-        encoded_image.append(tf.image.encode_png(tf.concat(0, rows)))
-        
-    return encoded_image 
-
+        encoded_image[key] = tf.image.encode_png(tf.concat(0, rows))
+    return encoded_image
 
 with tf.Graph().as_default():
 
@@ -191,7 +196,7 @@ with tf.Graph().as_default():
     y_ph = tf.reshape(y_, [BAT_SIZE, IMAGE_H, IMAGE_W, 3])
 
     result = inference(x)
-    y_out = result['y_dc3']
+    y_out = result['y_dc4']
     
     rf = []
     label = []
@@ -244,7 +249,7 @@ with tf.Graph().as_default():
             for i in range(len(train_image)/batch_size):
                 if train_flag == 0:
                     train_res = sess.run(train_op, feed_dict = train_feed)
-                    if step > 15000:
+                    if step > 5000:
                         print "----------------* cnn_train finished *----------------"
                         print("")
                         train_flag = 1
@@ -254,12 +259,12 @@ with tf.Graph().as_default():
                         sess.run(d_train_op, feed_dict = train_feed)
 
             if step == 0:
-                in_img = sess.run(in_image, {x: train_image[:10]})
-                target = sess.run(res_image, {y_: train_depth[:10]})
+                in_img = sess.run(in_image[0], {x: train_image[:10]})
                 with open("database/image/input.png", 'wb') as f:
-                    f.write(in_img[0])
+                    f.write(in_img)
+                tar_img = sess.run(res_image[0], {y_: train_depth[:10]})
                 with open("database/image/target.png", 'wb') as f:
-                    f.write(target[0])
+                    f.write(tar_img)
 
             if step % 10 == 0:
                 # output results
@@ -278,10 +283,10 @@ with tf.Graph().as_default():
             
             if step % 10 == 0:
                 num = step/10
-                val = sess.run(images, {x: train_image[:10], y_: train_depth[:batch_size]})
-                for j in range(len(val)):
-                    with open("database/image/result%s-%03d.png" % (IMAGE_KEYS[j], num), 'wb') as f:
-                        f.write(val[j])
+                for j in range(len(IMAGE_KEYS)):
+                    img = sess.run(images[IMAGE_KEYS[j]], {x: train_image[:10], y_: train_depth[:10]})
+                    with open("database/image/result_%s_%03d.png" % (IMAGE_KEYS[j], num), 'wb') as f:
+                        f.write(img)
         
         save_path = saver.save(sess, "CDC_I-O_128.model")
         sess.cllose() 
