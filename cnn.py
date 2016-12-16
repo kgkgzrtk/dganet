@@ -7,11 +7,12 @@ IMAGE_H = 128
 IMAGE_W = 128
 IMAGE_SIZE = IMAGE_H*IMAGE_W
 
-IMAGE_KEYS = ['y_p0','y_p2' ,'y_p4' ,'y_dc0' ,'y_dc2', 'y_dc4', 'y_in']
+IMAGE_KEYS = ['y_p0','y_p2' ,'y_p4' ,'y_dc0' ,'y_dc2', 'y_dc4', 'g_p0']
 
 W_RANGE = [128, 64, 32, 16, 8, 4]
 CH_RANGE = [3, 16, 32, 64, 128, 256]
 BAT_SIZE = 10
+ALPHA = 1
 
 # input image data
 train_image = []
@@ -40,8 +41,7 @@ def b_n(input_):
     gamma = tf.Variable(tf.truncated_normal([shape], stddev=0.1))
     beta = tf.Variable(tf.truncated_normal([shape], stddev=0.1))
     mean, variance = tf.nn.moments(input_, [0, 1, 2])
-    #return gamma * (input_ - mean) / tf.sqrt(variance + eps) + beta
-    return input_
+    return gamma * (input_ - mean) / tf.sqrt(variance + eps) + beta
 
 def lrelu(x, leak=0.2, name="lrelu"):
     return tf.maximum(x, leak*x)
@@ -74,7 +74,7 @@ def deconv(image, output_shape, name, c=5, k=2, stddev=0.02, wd=0.0001):
         if wd:
             weight_decay = tf.mul(tf.nn.l2_loss(W), wd, name='weight_loss')
             tf.add_to_collection('w_loss', weight_decay)
-        return b_n(y)
+        return y
 
 def discriminator(image, depth):
     dim = 12
@@ -99,15 +99,19 @@ def inference(input_):
         dim = 16
         input_ = tf.reshape(input_, [BAT_SIZE, IMAGE_H, IMAGE_W, 3])
         #convolutional layers
+        
+        g_c0 = tf.nn.relu(conv(input_, dim, name='gc0'))
+        g_p0 = pool(g_c0)
+
         y_c0 = tf.nn.relu(conv(input_, dim, name='c0'))
         y_p0 = pool(y_c0)
         y_c1 = tf.nn.relu(conv(y_p0, dim * 2, name='c1'))
         y_p1 = pool(y_c1)
         y_c2 = tf.nn.relu(conv(y_p1, dim * 4, name='c3'))
         y_p2 = pool(y_c2)
-        y_c3 = tf.nn.relu(conv(y_p2, dim * 8, name='c3'))
+        y_c3 = tf.nn.relu(conv(y_p2, dim * 8, name='c4'))
         y_p3 = pool(y_c3)
-        y_c4 = tf.nn.relu(conv(y_p3, dim * 16, name='c3'))
+        y_c4 = tf.nn.relu(conv(y_p3, dim * 16, name='c5'))
         y_p4 = pool(y_c4)
 
     with tf.name_scope('gen') as scope:
@@ -116,10 +120,9 @@ def inference(input_):
         y_dc1 = tf.nn.relu(deconv(y_dc0, [BAT_SIZE, W_RANGE[3], W_RANGE[3], dim * 4], c=5, name='dc1'))
         y_dc2 = tf.nn.relu(deconv(y_dc1, [BAT_SIZE, W_RANGE[2], W_RANGE[2], dim * 2], c=5, name='dc2'))
         y_dc3 = tf.nn.relu(deconv(y_dc2, [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim], c=5, name='dc3'))
-        y_in = tf.nn.relu(deconv(tf.concat(3, [y_dc3, y_p0]), [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim], k=1, name='dcin'))
-        y_dc4 = tf.nn.sigmoid(deconv(y_in, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 3], c=5, name='dc4'))
+        y_dc4 = tf.nn.sigmoid(deconv(y_dc3 - g_p0, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 3], c=5, name='dc4'))
         
-    y = [y_p0 ,y_p2, y_p4, y_dc0, y_dc2, y_dc4, y_in]
+    y = [y_p0 ,y_p2, y_p4, y_dc0, y_dc2, y_dc4, g_p0]
     return dict(zip(IMAGE_KEYS, y))
 
 
@@ -128,7 +131,6 @@ def loss(y, y_):
         loss = tf.nn.l2_loss(y - y_)
         tf.scalar_summary("loss", loss)
     return loss
-        
 
 def gen_loss(h, h_):
     with tf.name_scope('g_loss') as scope:
@@ -149,19 +151,13 @@ def train(loss):
     with tf.name_scope('train') as scope:
         c_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='conv')
         g_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='gen')
-        train_step = tf.train.AdamOptimizer(2e-5).minimize(loss, var_list=list(c_vars + g_vars))
-    return train_step
-
-def g_train(g_loss):
-    with tf.name_scope('g_train') as scope:
-        g_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='gen')
-        train_step = tf.train.AdamOptimizer(2e-5).minimize(g_loss, var_list=g_vars)
+        train_step = tf.train.AdamOptimizer(1e-5).minimize(loss, var_list=list(c_vars + g_vars))
     return train_step
 
 def d_train(d_loss):
     with tf.name_scope('d_train') as scope:
         d_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='disc')
-        train_step = tf.train.AdamOptimizer(2e-5).minimize(d_loss, var_list=d_vars)
+        train_step = tf.train.AdamOptimizer(1e-6).minimize(d_loss, var_list=d_vars)
     return train_step
 
 def gen_image(result):
@@ -220,9 +216,8 @@ with tf.Graph().as_default():
     d_loss, acc = disc_loss(h, h_)
     g_loss = gen_loss(h, h_)
 
-    train_op = train(loss + tf.add_n(tf.get_collection('w_loss')) )
+    train_op = train(loss + tf.add_n(tf.get_collection('w_loss')) + ALPHA * g_loss)
     d_train_op = d_train(d_loss)
-    g_train_op = g_train(g_loss)
 
     saver = tf.train.Saver()
     summary_op = tf.merge_all_summaries()
@@ -247,18 +242,10 @@ with tf.Graph().as_default():
             test_feed = {x: train_image[:batch_size], y_: train_depth[:batch_size]}
             
             for i in range(len(train_image)/batch_size):
-                if train_flag == 0:
-                    train_res = sess.run(train_op, feed_dict = train_feed)
-                    if step > 5000:
-                        print "----------------* cnn_train finished *----------------"
-                        print("")
-                        train_flag = 1
-                else:
-                    train_res = sess.run([g_train_op, acc], feed_dict = train_feed)
-                    if train_res[1] < 0.8:
-                        sess.run(d_train_op, feed_dict = train_feed)
+                train_res = sess.run(train_op, feed_dict = train_feed)
 
             if step == 0:
+                # save input & target image
                 in_img = sess.run(in_image[0], {x: train_image[:10]})
                 with open("database/image/input.png", 'wb') as f:
                     f.write(in_img)
@@ -266,22 +253,21 @@ with tf.Graph().as_default():
                 with open("database/image/target.png", 'wb') as f:
                     f.write(tar_img)
 
+            if step % 100 == 0:
+                sess.run(d_train_op, feed_dict = train_feed)
+
             if step % 10 == 0:
                 # output results
-                if train_flag == 0:
-                    result = sess.run([summary_op, loss], feed_dict = test_feed)
-                    print("loss at step %s: %.10f" % (step, result[1]))
-                else:
-                    result = sess.run([summary_op, loss, g_loss, d_loss, acc], feed_dict = test_feed)
-                    print("loss at step %s: %.10f" % (step, result[1]))
-                    print("g_loss : %.10f" % result[2])
-                    print("d_loss : %.10f" % result[3])
-                    print("accuracy : %f" % result[4])
-                    print("")
+                result = sess.run([summary_op, loss, g_loss, d_loss, acc], feed_dict = test_feed)
+                print("loss at step %s: %.10f" % (step, result[1]))
+                print("g_loss : %.10f" % result[2])
+                print("d_loss : %.10f" % result[3])
+                print("accuracy : %f" % result[4])
+                print("")
                 summary_str = sess.run(summary_op,{x: train_image[:10], y_:train_depth[:10]})
                 summary_writer.add_summary(summary_str,step)
-            
-            if step % 10 == 0:
+                
+                # save image
                 num = step/10
                 for j in range(len(IMAGE_KEYS)):
                     img = sess.run(images[IMAGE_KEYS[j]], {x: train_image[:10], y_: train_depth[:10]})
