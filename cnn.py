@@ -7,7 +7,7 @@ IMAGE_H = 128
 IMAGE_W = 128
 IMAGE_SIZE = IMAGE_H*IMAGE_W
 
-IMAGE_KEYS = ['y_p0','y_p3' ,'y_p4' ,'y_dc2' ,'y_dc4', 'y_dc5']
+IMAGE_KEYS = ['y_p0','y_p3' ,'y_p4' ,'y_dc2' ,'y_dc5', 'y_dc6']
 
 W_RANGE = [128, 64, 32, 16, 8, 4]
 CH_RANGE = [3, 16, 32, 64, 128, 256]
@@ -115,10 +115,11 @@ def inference(input_):
         y_dc1 = tf.nn.relu(b_n(deconv(y_dc0, [BAT_SIZE, W_RANGE[3], W_RANGE[3], dim * 4], c=3, name='dc1')))
         y_dc2 = tf.nn.relu(b_n(deconv(y_dc1, [BAT_SIZE, W_RANGE[2], W_RANGE[2], dim * 2], c=4, name='dc2')))
         y_dc3 = tf.nn.relu(b_n(deconv(y_dc2, [BAT_SIZE, W_RANGE[2], W_RANGE[2], dim], c=3, k=1, name='dc3')))
-        y_dc4 = tf.nn.relu(b_n(deconv(y_dc3, [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim], c=4, name='dc4')))
-        y_dc5 = tf.nn.sigmoid(deconv(y_dc4 + y_p0, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], c=5, name='dc5'))
+        y_dc4 = tf.nn.relu(b_n(deconv(y_dc3, [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim], c=3, name='dc4')))
+        y_dc5 = tf.nn.relu(b_n(deconv(y_dc4 + y_p0, [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim], c=4, k=1, name='dc5')))
+        y_dc6 = tf.nn.sigmoid(deconv(y_dc5, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], c=5, name='dc6'))
         
-    y = [y_p0 ,y_p3, y_p4, y_dc2, y_dc4, y_dc5]
+    y = [y_p0 ,y_p3, y_p4, y_dc2, y_dc5, y_dc6]
     return dict(zip(IMAGE_KEYS, y))
 
 
@@ -188,7 +189,7 @@ with tf.Graph().as_default():
     y_ph = tf.reshape(y_, [BAT_SIZE, IMAGE_H, IMAGE_W, 1])
 
     result = inference(x)
-    y_out = result['y_dc5']
+    y_out = result[IMAGE_KEYS[-1]]
     
     rf = []
     label = []
@@ -249,7 +250,7 @@ with tf.Graph().as_default():
                 with open("database/image/target.png", 'wb') as f:
                     f.write(tar_img)
 
-            if step % 10 == 0:
+            if step % 50 == 0:
                 sess.run(d_train_op, feed_dict = train_feed)
 
             if step % 10 == 0:
@@ -270,5 +271,5 @@ with tf.Graph().as_default():
                     with open("database/image/result_%s_%03d.png" % (IMAGE_KEYS[j], num), 'wb') as f:
                         f.write(img)
         
-        save_path = saver.save(sess, "CDC_I-O_128.model")
+        save_path = saver.save(sess, "dganet_I-O_128.model")
         sess.cllose() 
