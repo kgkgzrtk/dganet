@@ -7,12 +7,12 @@ IMAGE_H = 128
 IMAGE_W = 128
 IMAGE_SIZE = IMAGE_H*IMAGE_W
 
-IMAGE_KEYS = ['y_p0','y_p2' ,'y_p4' ,'y_dc0' ,'y_dc2', 'y_dc4', 'g_p0']
+IMAGE_KEYS = ['y_p0','y_p3' ,'y_p4' ,'y_dc2' ,'y_dc4', 'y_dc5']
 
 W_RANGE = [128, 64, 32, 16, 8, 4]
 CH_RANGE = [3, 16, 32, 64, 128, 256]
 BAT_SIZE = 10
-ALPHA = 1
+ALPHA = 10
 
 # input image data
 train_image = []
@@ -26,7 +26,7 @@ for i in range(848):
     col_img = cv2.resize(col_img, (IMAGE_H, IMAGE_W))
     dep_img = cv2.resize(dep_img, (IMAGE_H, IMAGE_W))
     
-    dep_img = cv2.applyColorMap(dep_img, cv2.COLORMAP_JET)
+    _dep_img = cv2.applyColorMap(dep_img, cv2.COLORMAP_JET)
 
     train_image.append(col_img.flatten().astype(np.float32)/255.)
     train_depth.append(dep_img.flatten().astype(np.float32)/255.)
@@ -53,7 +53,7 @@ def linear(input_, output_size, stddev=0.02):
     bias = tf.Variable(tf.constant(0.0, shape=[output_size]))
     return tf.matmul(input_, matrix) + bias
 
-def conv(image, out_dim, name, c=5, k=1, stddev=0.02, wd=0.0001):
+def conv(image, out_dim, name, c=3, k=1, stddev=0.02, wd=0.0001):
     with tf.name_scope(name) as scope:
         W = tf.Variable(tf.truncated_normal([c, c, image.get_shape().dims[-1].value, out_dim], stddev=stddev))
         b = tf.Variable(tf.constant(0.0, shape=[out_dim]))
@@ -80,7 +80,7 @@ def discriminator(image, depth):
     dim = 12
     with tf.name_scope('disc') as scope:
         image = tf.reshape(image, [-1, IMAGE_H, IMAGE_W, 3])
-        depth = tf.reshape(depth, [-1, IMAGE_H, IMAGE_W, 3])
+        depth = tf.reshape(depth, [-1, IMAGE_H, IMAGE_W, 1])
 
         h0 = lrelu(conv(image, dim, k=2, name='h0_conv'))
         h1 = lrelu(conv(h0, dim*2, k=2, name='h1_conv'))
@@ -96,33 +96,29 @@ def discriminator(image, depth):
 
 def inference(input_):
     with tf.name_scope('conv') as scope:
-        dim = 16
+        dim = 32
         input_ = tf.reshape(input_, [BAT_SIZE, IMAGE_H, IMAGE_W, 3])
         #convolutional layers
         
-        g_c0 = tf.nn.relu(conv(input_, dim, name='gc0'))
-        g_p0 = pool(g_c0)
-
-        y_c0 = tf.nn.relu(conv(input_, dim, name='c0'))
+        y_c0 = tf.nn.relu(conv(input_, dim, c=5, name='c0'))
         y_p0 = pool(y_c0)
-        y_c1 = tf.nn.relu(conv(y_p0, dim * 2, name='c1'))
-        y_p1 = pool(y_c1)
-        y_c2 = tf.nn.relu(conv(y_p1, dim * 4, name='c3'))
-        y_p2 = pool(y_c2)
-        y_c3 = tf.nn.relu(conv(y_p2, dim * 8, name='c4'))
+        y_c1 = tf.nn.relu(conv(y_p0, dim * 2, c=4, name='c1'))
+        y_c2 = tf.nn.relu(conv(y_c1, dim * 4, k=2, name='c2'))
+        y_c3 = tf.nn.relu(conv(y_c2, dim * 8, k=2, name='c3'))
         y_p3 = pool(y_c3)
-        y_c4 = tf.nn.relu(conv(y_p3, dim * 16, name='c5'))
+        y_c4 = tf.nn.relu(conv(y_p3, dim * 16, name='c4'))
         y_p4 = pool(y_c4)
 
     with tf.name_scope('gen') as scope:
         #generator
-        y_dc0 = tf.nn.relu(deconv(y_p4, [BAT_SIZE, W_RANGE[4], W_RANGE[4], dim * 8], c=3, name='dc0'))
-        y_dc1 = tf.nn.relu(deconv(y_dc0, [BAT_SIZE, W_RANGE[3], W_RANGE[3], dim * 4], c=5, name='dc1'))
-        y_dc2 = tf.nn.relu(deconv(y_dc1, [BAT_SIZE, W_RANGE[2], W_RANGE[2], dim * 2], c=5, name='dc2'))
-        y_dc3 = tf.nn.relu(deconv(y_dc2, [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim], c=5, name='dc3'))
-        y_dc4 = tf.nn.sigmoid(deconv(y_dc3 - g_p0, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 3], c=5, name='dc4'))
+        y_dc0 = tf.nn.relu(b_n(deconv(y_p4, [BAT_SIZE, W_RANGE[4], W_RANGE[4], dim * 8], c=3, name='dc0')))
+        y_dc1 = tf.nn.relu(b_n(deconv(y_dc0, [BAT_SIZE, W_RANGE[3], W_RANGE[3], dim * 4], c=3, name='dc1')))
+        y_dc2 = tf.nn.relu(b_n(deconv(y_dc1, [BAT_SIZE, W_RANGE[2], W_RANGE[2], dim * 2], c=4, name='dc2')))
+        y_dc3 = tf.nn.relu(b_n(deconv(y_dc2, [BAT_SIZE, W_RANGE[2], W_RANGE[2], dim], c=3, k=1, name='dc3')))
+        y_dc4 = tf.nn.relu(b_n(deconv(y_dc3, [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim], c=4, name='dc4')))
+        y_dc5 = tf.nn.sigmoid(deconv(y_dc4 + y_p0, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], c=5, name='dc5'))
         
-    y = [y_p0 ,y_p2, y_p4, y_dc0, y_dc2, y_dc4, g_p0]
+    y = [y_p0 ,y_p3, y_p4, y_dc2, y_dc4, y_dc5]
     return dict(zip(IMAGE_KEYS, y))
 
 
@@ -151,13 +147,13 @@ def train(loss):
     with tf.name_scope('train') as scope:
         c_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='conv')
         g_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='gen')
-        train_step = tf.train.AdamOptimizer(1e-5).minimize(loss, var_list=list(c_vars + g_vars))
+        train_step = tf.train.AdamOptimizer(1e-4).minimize(loss, var_list=list(c_vars + g_vars))
     return train_step
 
 def d_train(d_loss):
     with tf.name_scope('d_train') as scope:
         d_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='disc')
-        train_step = tf.train.AdamOptimizer(1e-6).minimize(d_loss, var_list=d_vars)
+        train_step = tf.train.AdamOptimizer(3e-4).minimize(d_loss, var_list=d_vars)
     return train_step
 
 def gen_image(result):
@@ -186,13 +182,13 @@ def gen_image(result):
 with tf.Graph().as_default():
 
     x = tf.placeholder("float", [None, IMAGE_SIZE * 3], name="x")
-    y_ = tf.placeholder("float", [None, IMAGE_SIZE * 3], name="y_")
+    y_ = tf.placeholder("float", [None, IMAGE_SIZE], name="y_")
 
     x_ph = tf.reshape(x, [BAT_SIZE, IMAGE_H, IMAGE_W, 3])
-    y_ph = tf.reshape(y_, [BAT_SIZE, IMAGE_H, IMAGE_W, 3])
+    y_ph = tf.reshape(y_, [BAT_SIZE, IMAGE_H, IMAGE_W, 1])
 
     result = inference(x)
-    y_out = result['y_dc4']
+    y_out = result['y_dc5']
     
     rf = []
     label = []
@@ -253,7 +249,7 @@ with tf.Graph().as_default():
                 with open("database/image/target.png", 'wb') as f:
                     f.write(tar_img)
 
-            if step % 100 == 0:
+            if step % 10 == 0:
                 sess.run(d_train_op, feed_dict = train_feed)
 
             if step % 10 == 0:
