@@ -112,8 +112,8 @@ def inference(input_):
     with tf.name_scope('gen') as scope:
         #generator
         y_dc0 = tf.nn.relu(b_n(deconv(y_p3, [BAT_SIZE, W_RANGE[2], W_RANGE[2], CH_RANGE[2]], k=2, c=3, name='dc0')))
-        y_dc1 = tf.nn.relu(deconv(y_dc0, [BAT_SIZE, W_RANGE[2], W_RANGE[2], CH_RANGE[2]], c=5, name='dc1'))
-        y_dc2 = tf.nn.relu(b_n(deconv(y_dc1, [BAT_SIZE, W_RANGE[1], W_RANGE[1], CH_RANGE[1]], k=2, c=5, name='dc2')))
+        y_dc1 = tf.nn.relu(b_n(deconv(y_dc0, [BAT_SIZE, W_RANGE[2], W_RANGE[2], CH_RANGE[2]], c=5, name='dc1')))
+        y_dc2 = tf.nn.relu(deconv(y_dc1, [BAT_SIZE, W_RANGE[1], W_RANGE[1], CH_RANGE[1]], k=2, c=5, name='dc2'))
         y_dc3 = tf.nn.relu(deconv(y_dc2 + y_p0, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], k=2, c=5, name='dc3'))
         
     y = [y_p0 ,y_p2, y_p3, y_dc2, y_dc3]
