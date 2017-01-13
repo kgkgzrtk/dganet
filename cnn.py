@@ -53,10 +53,10 @@ def linear(input_, output_size, stddev=0.02):
     bias = tf.Variable(tf.constant(0.0, shape=[output_size]))
     return tf.matmul(input_, matrix) + bias
 
-def conv(image, out_dim, name, c=3, k=1, stddev=0.02, wd=1e-5):
+def conv(image, out_dim, name, c=3, k=1, stddev=0.1, wd=1e-5):
     with tf.name_scope(name) as scope:
         W = tf.Variable(tf.truncated_normal([c, c, image.get_shape().dims[-1].value, out_dim], stddev=stddev))
-        b = tf.Variable(tf.constant(0.5, shape=[out_dim]))
+        b = tf.Variable(tf.constant(0.1, shape=[out_dim]))
         y = tf.nn.conv2d(image, W, strides=[1, k, k, 1], padding='SAME') + b
         if wd:
             weight_decay = tf.mul(tf.nn.l2_loss(W), wd, name='weight_loss')
@@ -67,10 +67,10 @@ def pool(x, k=2):
     return tf.nn.max_pool(x, ksize=[1, k, k, 1], strides=[1, 2, 2, 1], padding='SAME')
 
 
-def deconv(image, output_shape, name, c=5, k=1, stddev=0.02, wd=1e-5):
+def deconv(image, output_shape, name, c=5, k=1, stddev=0.1, wd=1e-5):
     with tf.name_scope(name) as scope:
         W = tf.Variable(tf.truncated_normal([c, c, output_shape[-1], image.get_shape().dims[-1].value], stddev=stddev))    
-        b = tf.Variable(tf.constant(0.5, shape=[output_shape[-1]]))
+        b = tf.Variable(tf.constant(0.1, shape=[output_shape[-1]]))
         y = tf.nn.deconv2d(image, W, output_shape=output_shape, strides=[1,k,k,1], padding='SAME') + b
         if wd:
             weight_decay = tf.mul(tf.nn.l2_loss(W), wd, name='weight_loss')
@@ -104,8 +104,8 @@ def inference(input_):
         y_c0 = tf.nn.relu(conv(input_, CH_RANGE[1], c=5, name='c0'))
         y_p0 = b_n(pool(y_c0))
         y_c1 = tf.nn.relu(conv(y_p0, CH_RANGE[2], c=5, name='c1'))
-        y_c2 = tf.nn.relu(b_n(conv(y_c1, CH_RANGE[2], c=5, name='c2')))
-        y_p2 = pool(y_c2)
+        y_p1 = pool(y_c1)
+        y_c2 = tf.nn.relu(b_n(conv(y_p1, CH_RANGE[2], c=5, name='c2')))
         y_c3 = tf.nn.relu(b_n(conv(y_p2, CH_RANGE[3], c=5, name='c3')))
         y_p3 = pool(y_c3)
 
@@ -145,7 +145,7 @@ def train(loss):
     with tf.name_scope('train') as scope:
         c_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='conv')
         g_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='gen')
-        train_step = tf.train.AdamOptimizer(2e-6).minimize(loss, var_list=list(c_vars + g_vars))
+        train_step = tf.train.AdamOptimizer(2e-5).minimize(loss, var_list=list(c_vars + g_vars))
     return train_step
 
 def d_train(d_loss):
