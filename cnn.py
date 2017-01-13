@@ -145,7 +145,7 @@ def train(loss):
     with tf.name_scope('train') as scope:
         c_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='conv')
         g_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='gen')
-        train_step = tf.train.AdamOptimizer(0.0002).minimize(loss, var_list=list(c_vars + g_vars))
+        train_step = tf.train.AdamOptimizer(3e-5).minimize(loss, var_list=list(c_vars + g_vars))
     return train_step
 
 def d_train(d_loss):
