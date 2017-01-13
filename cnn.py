@@ -7,7 +7,7 @@ IMAGE_H = 128
 IMAGE_W = 128
 IMAGE_SIZE = IMAGE_H*IMAGE_W
 
-IMAGE_KEYS = ['y_p0', 'y_p2', 'y_p3', 'y_dc2', 'y_dc3']
+IMAGE_KEYS = ['y_p0', 'y_p1', 'y_p3', 'y_dc2', 'y_dc3']
 
 W_RANGE = [128, 64, 32, 16, 8, 4]
 CH_RANGE = [3, 16, 32, 64, 128, 256]
@@ -106,7 +106,7 @@ def inference(input_):
         y_c1 = tf.nn.relu(conv(y_p0, CH_RANGE[2], c=5, name='c1'))
         y_p1 = pool(y_c1)
         y_c2 = tf.nn.relu(b_n(conv(y_p1, CH_RANGE[2], c=5, name='c2')))
-        y_c3 = tf.nn.relu(b_n(conv(y_p2, CH_RANGE[3], c=5, name='c3')))
+        y_c3 = tf.nn.relu(b_n(conv(y_c2, CH_RANGE[3], c=5, name='c3')))
         y_p3 = pool(y_c3)
 
     with tf.name_scope('gen') as scope:
@@ -116,7 +116,7 @@ def inference(input_):
         y_dc2 = tf.nn.relu(deconv(y_dc1, [BAT_SIZE, W_RANGE[1], W_RANGE[1], CH_RANGE[1]], k=2, c=5, name='dc2'))
         y_dc3 = tf.nn.relu(deconv(y_dc2 + y_p0, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], k=2, c=5, name='dc3'))
         
-    y = [y_p0 ,y_p2, y_p3, y_dc2, y_dc3]
+    y = [y_p0 ,y_p1, y_p3, y_dc2, y_dc3]
     return dict(zip(IMAGE_KEYS, y))
 
 
