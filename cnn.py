@@ -101,10 +101,10 @@ def inference(input_):
         input_ = tf.reshape(input_, [BAT_SIZE, IMAGE_H, IMAGE_W, 3])
         #convolutional layers
         
-        y_c0 = tf.nn.relu(b_n(conv(input_, CH_RANGE[1], c=5, name='c0')))
-        y_p0 = pool(y_c0)
-        y_c1 = tf.nn.relu(b_n(conv(y_p0, CH_RANGE[2], c=5, name='c1')))
-        y_c2 = tf.nn.relu(conv(y_c1, CH_RANGE[2], c=5, name='c2'))
+        y_c0 = tf.nn.relu(conv(input_, CH_RANGE[1], c=5, name='c0'))
+        y_p0 = b_n(pool(y_c0))
+        y_c1 = tf.nn.relu(conv(y_p0, CH_RANGE[2], c=5, name='c1'))
+        y_c2 = tf.nn.relu(b_n(conv(y_c1, CH_RANGE[2], c=5, name='c2')))
         y_p2 = pool(y_c2)
         y_c3 = tf.nn.relu(b_n(conv(y_p2, CH_RANGE[3], c=5, name='c3')))
         y_p3 = pool(y_c3)
