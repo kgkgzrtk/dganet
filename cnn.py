@@ -7,7 +7,7 @@ IMAGE_H = 128
 IMAGE_W = 128
 IMAGE_SIZE = IMAGE_H*IMAGE_W
 
-IMAGE_KEYS = ['y_p0', 'y_p1', 'y_p3', 'y_dc2', 'y_dc3']
+IMAGE_KEYS = ['y_p0', 'y_p1', 'y_p3', 'y_in', 'y_dc2', 'y_dc3']
 
 W_RANGE = [128, 64, 32, 16, 8, 4]
 CH_RANGE = [3, 16, 32, 64, 128, 256]
@@ -114,9 +114,10 @@ def inference(input_):
         y_dc0 = tf.nn.relu(deconv(y_p3, [BAT_SIZE, W_RANGE[2], W_RANGE[2], CH_RANGE[2]], k=2, c=3, name='dc0'))
         y_dc1 = tf.nn.relu(deconv(y_dc0, [BAT_SIZE, W_RANGE[2], W_RANGE[2], CH_RANGE[2]], c=5, name='dc1'))
         y_dc2 = tf.nn.relu(deconv(y_dc1, [BAT_SIZE, W_RANGE[1], W_RANGE[1], CH_RANGE[1]], k=2, c=5, name='dc2'))
-        y_dc3 = tf.nn.relu(deconv(y_dc2 + y_p0, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], k=2, c=5, name='dc3'))
+        y_in = y_p0 + y_dc2
+        y_dc3 = tf.nn.relu(deconv(y_in, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], k=2, c=5, name='dc3'))
         
-    y = [y_p0 ,y_p1, y_p3, y_dc2, y_dc3]
+    y = [y_p0 ,y_p1, y_p3, y_in, y_dc2, y_dc3]
     return dict(zip(IMAGE_KEYS, y))
 
 
@@ -145,7 +146,7 @@ def train(loss):
     with tf.name_scope('train') as scope:
         c_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='conv')
         g_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='gen')
-        train_step = tf.train.AdamOptimizer(2e-6).minimize(loss, var_list=list(c_vars + g_vars))
+        train_step = tf.train.AdamOptimizer(2e-7).minimize(loss, var_list=list(c_vars + g_vars))
     return train_step
 
 def d_train(d_loss):
