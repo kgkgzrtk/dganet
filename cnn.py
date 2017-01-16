@@ -115,7 +115,7 @@ def inference(input_):
         y_dc1 = tf.nn.relu(deconv(y_dc0, [BAT_SIZE, W_RANGE[2], W_RANGE[2], CH_RANGE[2]], c=5, name='dc1'))
         y_dc2 = tf.nn.relu(deconv(y_dc1, [BAT_SIZE, W_RANGE[1], W_RANGE[1], CH_RANGE[1]], k=2, c=5, name='dc2'))
         y_in = y_p0 + y_dc2
-        y_dc3 = tf.nn.relu(deconv(y_in, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], k=2, c=5, name='dc3'))
+        y_dc3 = tf.nn.sigmoid(deconv(y_in, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], k=2, c=5, name='dc3'))
         
     y = [y_p0 ,y_p1, y_p3, y_in, y_dc2, y_dc3]
     return dict(zip(IMAGE_KEYS, y))
