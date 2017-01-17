@@ -123,7 +123,7 @@ def inference(input_):
 
 def loss(y, y_):
     with tf.name_scope('loss') as scope:
-        loss = tf.nn.l2_loss(y_, y)
+        loss = tf.nn.l2_loss(y_ - y)
         tf.scalar_summary("loss", loss)
     return loss
 
@@ -154,7 +154,7 @@ def d_train(d_loss):
     with tf.name_scope('d_train') as scope:
         d_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='disc')
         train_step = tf.train.AdamOptimizer(3e-4).minimize(d_loss, var_list=d_vars)
-    return train_stepPAC: Augmented PAttern Classification
+    return train_step
 
 def gen_image(result):
     for key, val in result.items():
