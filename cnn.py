@@ -105,8 +105,8 @@ def inference(input_):
         y_p0 = pool(y_c0)
         y_c1 = tf.nn.relu(conv(y_p0, CH_RANGE[2], c=5, name='c1'))
         y_p1 = pool(y_c1)
-        y_c2 = tf.nn.relu(conv(y_p1, CH_RANGE[2], c=5, name='c2'))
-        y_c3 = tf.nn.relu(conv(y_c2, CH_RANGE[3], c=5, name='c3'))
+        y_c2 = tf.nn.relu(conv(y_p1, CH_RANGE[2], c=3, name='c2'))
+        y_c3 = tf.nn.relu(conv(y_c2, CH_RANGE[3], c=3, name='c3'))
         y_p3 = pool(y_c3)
 
     with tf.name_scope('gen') as scope:
@@ -123,7 +123,7 @@ def inference(input_):
 
 def loss(y, y_):
     with tf.name_scope('loss') as scope:
-        loss = tf.nn.l2_loss(y - y_)
+        loss = tf.reduce_sum(0.5 * tf.pow(y - y_, 2))
         tf.scalar_summary("loss", loss)
     return loss
 
@@ -146,7 +146,7 @@ def train(loss):
     with tf.name_scope('train') as scope:
         c_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='conv')
         g_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='gen')
-        train_step = tf.train.AdamOptimizer(2e-7).minimize(loss, var_list=list(c_vars + g_vars))
+        train_step = tf.train.AdamOptimizer(2e-6).minimize(loss, var_list=list(c_vars + g_vars))
     return train_step
 
 def d_train(d_loss):
