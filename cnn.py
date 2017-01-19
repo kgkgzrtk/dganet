@@ -34,7 +34,7 @@ for i in range(848):
 train_image = np.asarray(train_image)
 train_depth = np.asarray(train_depth)
 
-
+"""
 def b_n(input_):
     shape = input_.get_shape().dims[3].value
     eps = 1e-5
@@ -52,6 +52,7 @@ def linear(input_, output_size, stddev=0.02):
     matrix = tf.Variable(tf.truncated_normal([shape[1].value, output_size], stddev=stddev))
     bias = tf.Variable(tf.constant(0.0, shape=[output_size]))
     return tf.matmul(input_, matrix) + bias
+"""
 
 def conv(image, out_dim, name, c=3, k=1, stddev=0.1, wd=1e-5):
     with tf.name_scope(name) as scope:
@@ -76,7 +77,7 @@ def deconv(image, output_shape, name, c=5, k=1, stddev=0.1, wd=1e-5):
             weight_decay = tf.mul(tf.nn.l2_loss(W), wd, name='weight_loss')
             tf.add_to_collection('w_loss', weight_decay)
         return y
-
+"""
 def discriminator(image, depth):
     dim = 12
     with tf.name_scope('disc') as scope:
@@ -93,7 +94,7 @@ def discriminator(image, depth):
         hl1 = lrelu(conv(hl0, dim*4, k=2, name='hl1_conv'))
         hl2 = linear(tf.reshape(hl1,[BAT_SIZE, -1]), BAT_SIZE)
         return tf.nn.sigmoid(hl2)
-
+"""
 
 def inference(input_):
     with tf.name_scope('conv') as scope:
@@ -105,8 +106,8 @@ def inference(input_):
         y_p0 = pool(y_c0)
         y_c1 = tf.nn.relu(conv(y_p0, CH_RANGE[2], c=5, name='c1'))
         y_p1 = pool(y_c1)
-        y_c2 = tf.nn.relu(conv(y_p1, CH_RANGE[2], c=3, name='c2'))
-        y_c3 = tf.nn.relu(conv(y_c2, CH_RANGE[3], c=3, name='c3'))
+        y_c2 = tf.nn.relu(conv(y_p1, CH_RANGE[2], c=5, name='c2'))
+        y_c3 = tf.nn.relu(conv(y_c2, CH_RANGE[3], c=5, name='c3'))
         y_p3 = pool(y_c3)
 
     with tf.name_scope('gen') as scope:
@@ -127,6 +128,7 @@ def loss(y, y_):
         tf.scalar_summary("loss", loss)
     return loss
 
+"""
 def gen_loss(h, h_):
     with tf.name_scope('g_loss') as scope:
         zero_h = tf.zeros_like(h_)
@@ -141,21 +143,21 @@ def disc_loss(h, h_):
         correct_prediction = tf.reduce_mean(h_ * h + (1. - h_)*(1. - h))
         accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
     return d_entropy, accuracy
-
+"""
 def train(loss):
     with tf.name_scope('train') as scope:
-        c_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='conv')
-        g_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='gen')
+        #c_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='conv')
+        #g_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='gen')
         #train_step = tf.train.AdamOptimizer(2e-6).minimize(loss, var_list=list(c_vars + g_vars))
-        train_step = tf.train.AdamOptimizer(2e-6).minimize(loss)
+        train_step = tf.train.AdamOptimizer(2e-5).minimize(loss)
     return train_step
-
+"""
 def d_train(d_loss):
     with tf.name_scope('d_train') as scope:
         d_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='disc')
         train_step = tf.train.AdamOptimizer(3e-4).minimize(d_loss, var_list=d_vars)
     return train_step
-
+"""
 def gen_image(result):
     for key, val in result.items():
         encoded_image = result
@@ -190,6 +192,7 @@ with tf.Graph().as_default():
     result = inference(x)
     y_out = result[IMAGE_KEYS[-1]]
     
+    """
     rf = []
     label = []
     real = [tf.squeeze(ys, [0]) for ys in tf.split(0, BAT_SIZE, y_ph)]
@@ -207,14 +210,19 @@ with tf.Graph().as_default():
 
     h_ = tf.pack(label)
     h = discriminator(x, sample)
+    """
+
 
     loss = loss(y_out, y_ph)
+    """
     d_loss, acc = disc_loss(h, h_)
     g_loss = gen_loss(h, h_)
+    """
 
-    train_op = train(loss + ALPHA * tf.add_n(tf.get_collection('w_loss')) + ALPHA * g_loss)
+    #train_op = train(loss + ALPHA * tf.add_n(tf.get_collection('w_loss')) + ALPHA * g_loss)
+    train_op = train(loss)
 
-    d_train_op = d_train(d_loss)
+    #d_train_op = d_train(d_loss)
 
     saver = tf.train.Saver()
     summary_op = tf.merge_all_summaries()
@@ -233,12 +241,12 @@ with tf.Graph().as_default():
         batch_size = 10
         train_flag = 0
         for step in range(20000):
-            batch = batch_size*i
-            train_feed = {x: train_image[batch:batch+batch_size],
-                          y_: train_depth[batch:batch+batch_size]}
             test_feed = {x: train_image[:batch_size], y_: train_depth[:batch_size]}
             
             for i in range(len(train_image)/batch_size):
+                batch = batch_size*i
+                train_feed = {x: train_image[batch:batch+batch_size],
+                              y_: train_depth[batch:batch+batch_size]}
                 train_res = sess.run(train_op, feed_dict = train_feed)
 
             if step == 0:
@@ -249,21 +257,25 @@ with tf.Graph().as_default():
                 tar_img = sess.run(res_image[0], {y_: train_depth[:10]})
                 with open("database/image/target.png", 'wb') as f:
                     f.write(tar_img)
-
-            if step % 50 + 1 == 0:
+            """
+            if step % 50 == 0:
                 sess.run(d_train_op, feed_dict = train_feed)
+            """
 
             if step % 10 == 0:
                 # output results
+                """
                 result = sess.run([summary_op, loss, g_loss, d_loss, acc], feed_dict = test_feed)
                 print("loss at step %s: %.10f" % (step, result[1]))
                 print("g_loss : %.10f" % result[2])
                 print("d_loss : %.10f" % result[3])
                 print("accuracy : %f" % result[4])
                 print("")
+                """
+                result = sess.run([summary_op, loss], feed_dict = test_feed)
+                print("loss at step %s: %.10f" % (step, result[1]))
                 summary_str = sess.run(summary_op,{x: train_image[:10], y_:train_depth[:10]})
                 summary_writer.add_summary(summary_str,step)
-                
                 # save image
                 num = step/10
                 for j in range(len(IMAGE_KEYS)):
