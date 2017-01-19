@@ -100,10 +100,10 @@ def inference(input_):
         input_ = tf.reshape(input_, [BAT_SIZE, IMAGE_H, IMAGE_W, 3])
         #convolutional layers
         
-        y_c0 = tf.nn.relu(conv(input_, dim, c=7, name='c0'))
-        y_c1 = tf.nn.relu(conv(y_c0, dim * 2, c=5, name='c1'))
+        y_c0 = tf.nn.relu(conv(input_, dim, name='c0'))
+        y_c1 = tf.nn.relu(conv(y_c0, dim * 2, name='c1'))
         y_p1 = pool(y_c1)
-        y_c2 = tf.nn.relu(conv(y_p1, dim * 2, k=2, c=5, name='c2'))
+        y_c2 = tf.nn.relu(conv(y_p1, dim * 2, name='c2'))
         y_c3 = tf.nn.relu(conv(y_c2, dim * 4, name='c3'))
         y_c4 = tf.nn.relu(conv(y_c3, dim * 8, k=2, name='c4'))
         y_p4 = pool(y_c4)
@@ -112,13 +112,13 @@ def inference(input_):
 
     with tf.name_scope('gen') as scope:
         #generator
-        y_dc0 = tf.nn.relu(b_n(deconv(y_p5, [BAT_SIZE, W_RANGE[4], W_RANGE[4], dim * 8], name='dc0')))
-        y_dc1 = tf.nn.relu(b_n(deconv(y_dc0, [BAT_SIZE, W_RANGE[3], W_RANGE[3], dim * 4], name='dc1')))
+        y_dc0 = tf.nn.relu(b_n(deconv(y_p5, [BAT_SIZE, W_RANGE[3], W_RANGE[3], dim * 8], name='dc0')))
+        y_dc1 = tf.nn.relu(b_n(deconv(y_dc0, [BAT_SIZE, W_RANGE[3], W_RANGE[3], dim * 4], k=1, name='dc1')))
         y_dc2 = tf.nn.relu(b_n(deconv(y_dc1, [BAT_SIZE, W_RANGE[2], W_RANGE[2], dim * 2], name='dc2')))
         y_dc3 = tf.nn.relu(b_n(deconv(y_dc2, [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim * 2], name='dc3')))
-        y_dc4 = tf.nn.relu(b_n(deconv(y_dc3, [BAT_SIZE, W_RANGE[0], W_RANGE[0], dim], c=5,name='dc4')))
-        y_dc5 = tf.nn.relu(b_n(deconv(y_dc4 + y_c0, [BAT_SIZE, W_RANGE[0], W_RANGE[0], dim], k=1, c=5, name='dc5')))
-        y_dc6 = tf.nn.sigmoid(deconv(y_dc5, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], k=1, c=7, name='dc6'))
+        y_dc4 = tf.nn.relu(b_n(deconv(y_dc3, [BAT_SIZE, W_RANGE[0], W_RANGE[0], dim],name='dc4')))
+        y_dc5 = tf.nn.relu(b_n(deconv(y_dc4 + y_c0, [BAT_SIZE, W_RANGE[0], W_RANGE[0], dim], k=1, name='dc5')))
+        y_dc6 = tf.nn.sigmoid(deconv(y_dc5, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], k=1, name='dc6'))
         
     y = [y_p1 ,y_p4, y_p5, y_dc2, y_dc5, y_dc6]
     return dict(zip(IMAGE_KEYS, y))
@@ -155,7 +155,7 @@ def train(loss):
 def d_train(d_loss):
     with tf.name_scope('d_train') as scope:
         d_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='disc')
-        train_step = tf.train.AdamOptimizer(3e-4).minimize(d_loss, var_list=d_vars)
+        train_step = tf.train.AdamOptimizer(1e-6).minimize(d_loss, var_list=d_vars)
     return train_step
 
 def gen_image(result):
