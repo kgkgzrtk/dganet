@@ -18,8 +18,15 @@ biasZ = 100
 buf = None
 tex_id = None
 
+shake_val = 0
+shake_flag = -1
+hold_ang = 0.
+
+cap_flag = -1
+
 I_MAX = IMAGE_W/area -1 -1
 J_MAX = IMAGE_H/area -1 -1
+
 
 
 movX = 0
@@ -27,22 +34,26 @@ movY = 0
 movZ = -500
 angX = 0
 angY = 0
-movef = GL_FALSE
+cap_num = 0
 vertex = []
 texture = []
 
+dir_path = "database/display/"
+save_path = dir_path + "cap/"
 
-dep_dir = "database/display/" + "depth757" + ".png"
+dep_dir =  dir_path + "depth757" + ".png"
 dep_img = cv2.imread(dep_dir, cv2.IMREAD_GRAYSCALE)
 dep_img = cv2.resize(dep_img, (IMAGE_W, IMAGE_H))
 dep_img = (150.0 - dep_img.astype(np.float32))*3.0
 
-col_dir = "database/display/" + "image" + ".png"
+col_dir = dir_path + "image" + ".png"
 pcol = Image.open(col_dir)
 pcol_img = np.array(list(pcol.getdata()),np.int8)
+ss_list = []
 
 
 def display():
+    global cap_num
 
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
 
@@ -72,6 +83,30 @@ def display():
     glDisableClientState(GL_VERTEX_ARRAY)
     glutSwapBuffers()
 
+    
+
+def shaking(val):
+    global angY, shake_val, hold_ang
+    max_val = 100
+
+    if shake_flag == 1:
+        angY = hold_ang + 20.*np.sin(2.*np.pi*float(shake_val)/float(max_val))
+        shake_val += 1
+        glutPostRedisplay()
+
+        if shake_val <= 200 :
+            glReadBuffer(GL_FRONT)
+            ss = glReadPixels(0, 0, IMAGE_W, IMAGE_H, GL_RGB, GL_UNSIGNED_BYTE)
+            ss = Image.fromstring(mode="RGB", size=(IMAGE_W,IMAGE_H), data=ss)
+            ss = ss.transpose(Image.FLIP_TOP_BOTTOM)
+            ss_list.append(ss)
+    else:
+        hold_ang = angY
+        shake_val = 0
+
+    glutTimerFunc(10, shaking, 0)
+
+
 def spin_key(key, x, y):
     global angX, angY
     if key == GLUT_KEY_LEFT:
@@ -86,7 +121,7 @@ def spin_key(key, x, y):
 
 
 def keyboard(key, x, y):
-    global movX, movY, movZ
+    global movX, movY, movZ, shake_flag, cap_flag
     if key == 'a':
         movX += 5.
     if key == 'd':
@@ -99,6 +134,14 @@ def keyboard(key, x, y):
         movY += 5.
     if key == 'f':
         movY -= 5.
+    if key == '1':
+        shake_flag*=-1
+    if key == 'o':
+        cap_flag*=-1
+    if key == 'q':
+        for ss in ss_list:
+            ss.save(save_path+"image_"+"%03d"%ss_list.index(ss)+".png")
+        sys.exit()
     glutPostRedisplay()
 
 def init_vertex(ver, tex):
@@ -179,8 +222,8 @@ def main():
     init_texture()
     glutSpecialFunc(spin_key)
     glutKeyboardFunc(keyboard)
+    glutTimerFunc(100, shaking, 0)
     glutDisplayFunc(display)
-    print("Mainloop")
     glutMainLoop()
 
 if __name__ == "__main__":
