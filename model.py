@@ -12,7 +12,7 @@ IMAGE_KEYS = ['y_p1','y_p4' ,'y_p5' ,'y_dc2' ,'y_dc5', 'y_dc6']
 W_RANGE = [128, 64, 32, 16, 8, 4]
 CH_RANGE = [3, 16, 32, 64, 128, 256]
 BAT_SIZE = 10
-ALPHA = 10
+ALPHA = 1
 
 # input image data
 train_image = []
@@ -83,15 +83,12 @@ def discriminator(image, depth):
         depth = tf.reshape(depth, [-1, IMAGE_H, IMAGE_W, 1])
 
         h0 = lrelu(conv(image, dim, k=2, name='h0_conv'))
-        h1 = lrelu(conv(h0, dim*2, k=2, name='h1_conv'))
 
         l0 = lrelu(conv(depth, dim, k=2, name='l0_conv'))
-        l1 = lrelu(conv(l0, dim*2, k=2, name='l1_conv'))
         
-        hl0 = tf.concat(3,[h1,l1])
-        hl1 = lrelu(conv(hl0, dim*4, k=2, name='hl1_conv'))
-        hl2 = linear(tf.reshape(hl1,[BAT_SIZE, -1]), BAT_SIZE)
-        return tf.nn.sigmoid(hl2)
+        hl0 = tf.concat(3,[h0,l0])
+        hl1 = linear(tf.reshape(hl0,[BAT_SIZE, -1]), BAT_SIZE)
+        return tf.nn.sigmoid(hl1)
 
 
 def inference(input_):
@@ -100,12 +97,12 @@ def inference(input_):
         input_ = tf.reshape(input_, [BAT_SIZE, IMAGE_H, IMAGE_W, 3])
         #convolutional layers
         
-        y_c0 = tf.nn.relu(conv(input_, dim, c=7, name='c0'))
-        y_c1 = tf.nn.relu(conv(y_c0, dim * 2, c=7, name='c1'))
+        y_c0 = tf.nn.relu(conv(input_, dim, c=11, name='c0'))
+        y_c1 = tf.nn.relu(conv(y_c0, dim * 2, c=11, name='c1'))
         y_p1 = pool(y_c1)
-        y_c2 = tf.nn.relu(conv(y_p1, dim * 2, name='c2'))
-        y_c3 = tf.nn.relu(conv(y_c2, dim * 4, name='c3'))
-        y_c4 = tf.nn.relu(conv(y_c3, dim * 8, k=2, name='c4'))
+        y_c2 = tf.nn.relu(conv(y_p1, dim * 2, c=7, name='c2'))
+        y_c3 = tf.nn.relu(conv(y_c2, dim * 4, c=7, k=2, name='c3'))
+        y_c4 = tf.nn.relu(conv(y_c3, dim * 8, c=5, name='c4'))
         y_p4 = pool(y_c4)
         y_c5 = tf.nn.relu(conv(y_p4, dim * 16, c=3, name='c5'))
         y_p5 = pool(y_c5)
@@ -115,7 +112,7 @@ def inference(input_):
         y_dc0 = tf.nn.relu(b_n(deconv(y_p5, [BAT_SIZE, W_RANGE[3], W_RANGE[3], dim * 8], c=3, name='dc0')))
         y_dc1 = tf.nn.relu(b_n(deconv(y_dc0, [BAT_SIZE, W_RANGE[3], W_RANGE[3], dim * 4], c=3, k=1, name='dc1')))
         y_dc2 = tf.nn.relu(b_n(deconv(y_dc1, [BAT_SIZE, W_RANGE[2], W_RANGE[2], dim * 2], c=3, name='dc2')))
-        y_dc3 = tf.nn.relu(b_n(deconv(y_dc2, [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim * 2], name='dc3')))
+        y_dc3 = tf.nn.relu(b_n(deconv(y_dc2, [BAT_SIZE, W_RANGE[1], W_RANGE[1], dim * 2], c=5, name='dc3')))
         y_dc4 = tf.nn.relu(b_n(deconv(y_dc3, [BAT_SIZE, W_RANGE[0], W_RANGE[0], dim], c=7, name='dc4')))
         y_dc5 = tf.nn.relu(b_n(deconv(y_dc4 + y_c0, [BAT_SIZE, W_RANGE[0], W_RANGE[0], dim], c=11, k=1, name='dc5')))
         y_dc6 = tf.nn.sigmoid(deconv(y_dc5, [BAT_SIZE, W_RANGE[0], W_RANGE[0], 1], k=1, c=11, name='dc6'))
@@ -130,20 +127,24 @@ def loss(y, y_):
         tf.scalar_summary("loss", loss)
     return loss
 
-def gen_loss(h, h_):
+def d_loss(h, h_):
+    with tf.name_scope('d_loss') as scope:
+        d_loss_fake = tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(h_,tf.ones_like(h_)) )
+        d_loss_real = tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(h,tf.zeros_like(h)) )
+        d_entropy = d_loss_fake + d_loss_real
+        tf.scalar_summary("d_entropy", d_entropy)
+    return d_entropy
+def g_loss(h, h_):
     with tf.name_scope('g_loss') as scope:
-        zero_h = tf.zeros_like(h_)
-        g_entropy = tf.reduce_mean(- (zero_h * tf.log(h + 1e-7) + (1. - zero_h) * tf.log(1. - h + 1e-7)))
+        g_entropy = tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(h,tf.ones_like(h)) )
         tf.scalar_summary("g_entropy", g_entropy)
     return g_entropy
 
-def disc_loss(h, h_):
+def disc_acc(h, h_):
     with tf.name_scope('d_loss') as scope:
-        d_entropy = tf.reduce_mean(- (h_ * tf.log(h + 1e-7) + (1. - h_) * tf.log(1. - h + 1e-7)))
-        tf.scalar_summary("d_entropy", d_entropy)
         correct_prediction = tf.reduce_mean(h_ * h + (1. - h_)*(1. - h))
         accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-    return d_entropy, accuracy
+    return accuracy
 
 def train(loss):
     with tf.name_scope('train') as scope:
@@ -211,8 +212,9 @@ with tf.Graph().as_default():
     h = discriminator(x, sample)
 
     loss = loss(y_out, y_ph)
-    d_loss, acc = disc_loss(h, h_)
-    g_loss = gen_loss(h, h_)
+    d_loss = d_loss(h, h_)
+    g_loss = g_loss(h, h_)
+    acc = disc_acc(h, h_)
 
     train_op = train(loss + tf.add_n(tf.get_collection('w_loss')) + ALPHA * g_loss)
     d_train_op = d_train(d_loss)
@@ -233,7 +235,7 @@ with tf.Graph().as_default():
         # train
         batch_size = 10
         train_flag = 0
-        for step in range(20000):
+        for step in range(5000):
             test_feed = {x: train_image[:batch_size], y_: train_depth[:batch_size]}
             
             for i in range(len(train_image)/batch_size):
@@ -272,6 +274,7 @@ with tf.Graph().as_default():
                     img = sess.run(images[IMAGE_KEYS[j]], {x: train_image[:10], y_: train_depth[:10]})
                     with open("database/image/result_%s_%03d.png" % (IMAGE_KEYS[j], num), 'wb') as f:
                         f.write(img)
+
         
         save_path = saver.save(sess, "dganet_I-O_128.model")
         sess.cllose() 

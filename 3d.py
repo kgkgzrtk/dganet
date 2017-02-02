@@ -44,7 +44,7 @@ save_path = dir_path + "cap/"
 dep_dir =  dir_path + "depth757" + ".png"
 dep_img = cv2.imread(dep_dir, cv2.IMREAD_GRAYSCALE)
 dep_img = cv2.resize(dep_img, (IMAGE_W, IMAGE_H))
-dep_img = (150.0 - dep_img.astype(np.float32))*3.0
+dep_img = (150.0 - dep_img.astype(np.float32))*6.0
 
 col_dir = dir_path + "image" + ".png"
 pcol = Image.open(col_dir)
@@ -94,7 +94,7 @@ def shaking(val):
         shake_val += 1
         glutPostRedisplay()
 
-        if shake_val <= 200 :
+        if shake_val <= max_val :
             glReadBuffer(GL_FRONT)
             ss = glReadPixels(0, 0, IMAGE_W, IMAGE_H, GL_RGB, GL_UNSIGNED_BYTE)
             ss = Image.fromstring(mode="RGB", size=(IMAGE_W,IMAGE_H), data=ss)
@@ -189,7 +189,7 @@ def init_texture():
 def init():
     global buf
     # select clearing color
-    glClearColor(1.0, 1.0, 1.0, 0.0)
+    glClearColor(0.0, 0.0, 0.0, 0.0)
     
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
 
