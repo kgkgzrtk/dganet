@@ -83,10 +83,12 @@ def discriminator(image, depth):
         depth = tf.reshape(depth, [-1, IMAGE_H, IMAGE_W, 1])
 
         h0 = lrelu(conv(image, dim, k=2, name='h0_conv'))
+        h1 = lrelu(conv(h0, dim*2, k=2, name='h1_conv'))
 
         l0 = lrelu(conv(depth, dim, k=2, name='l0_conv'))
+        l1 = lrelu(conv(l0, dim*2, k=2, name='l1_conv'))
         
-        hl0 = tf.concat(3,[h0,l0])
+        hl0 = tf.concat(3,[h1,l1])
         hl1 = linear(tf.reshape(hl0,[BAT_SIZE, -1]), BAT_SIZE)
         return tf.nn.sigmoid(hl1)
 
@@ -141,7 +143,7 @@ def g_loss(h, h_):
     return g_entropy
 
 def disc_acc(h, h_):
-    with tf.name_scope('d_loss') as scope:
+    with tf.name_scope('acc') as scope:
         correct_prediction = tf.reduce_mean(h_ * h + (1. - h_)*(1. - h))
         accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
     return accuracy
@@ -156,7 +158,7 @@ def train(loss):
 def d_train(d_loss):
     with tf.name_scope('d_train') as scope:
         d_vars = tf.get_collection(tf.GraphKeys.VARIABLES, scope='disc')
-        train_step = tf.train.AdamOptimizer(1e-6).minimize(d_loss, var_list=d_vars)
+        train_step = tf.train.AdamOptimizer(1e-4).minimize(d_loss, var_list=d_vars)
     return train_step
 
 def gen_image(result):
@@ -265,7 +267,7 @@ with tf.Graph().as_default():
                 print("d_loss : %.10f" % result[3])
                 print("accuracy : %f" % result[4])
                 print("")
-                summary_str = sess.run(summary_op,{x: train_image[:10], y_:train_depth[:10]})
+                summary_str = result[0];
                 summary_writer.add_summary(summary_str,step)
                 
                 # save image
