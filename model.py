@@ -77,18 +77,20 @@ def deconv(image, output_shape, name, c=3, k=2, stddev=0.02, wd=0.0001):
         return y
 
 def discriminator(image, depth):
-    dim = 12
+    dim = 16
     with tf.name_scope('disc') as scope:
         image = tf.reshape(image, [-1, IMAGE_H, IMAGE_W, 3])
         depth = tf.reshape(depth, [-1, IMAGE_H, IMAGE_W, 1])
 
         h0 = lrelu(conv(image, dim, k=2, name='h0_conv'))
         h1 = lrelu(conv(h0, dim*2, k=2, name='h1_conv'))
+        h2 = lrelu(conv(h1, dim*4, k=2, name='h2_conv'))
 
         l0 = lrelu(conv(depth, dim, k=2, name='l0_conv'))
         l1 = lrelu(conv(l0, dim*2, k=2, name='l1_conv'))
+        l2 = lrelu(conv(l1, dim*4, k=2, name='l2_conv'))
         
-        hl0 = tf.concat(3,[h1,l1])
+        hl0 = tf.concat(3,[h2,l2])
         hl1 = linear(tf.reshape(hl0,[BAT_SIZE, -1]), BAT_SIZE)
         return tf.nn.sigmoid(hl1)
 
@@ -131,14 +133,15 @@ def loss(y, y_):
 
 def d_loss(h, h_):
     with tf.name_scope('d_loss') as scope:
-        d_loss_fake = tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(h_,tf.ones_like(h_)) )
-        d_loss_real = tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(h,tf.zeros_like(h)) )
+        d_loss_fake = tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(h,tf.ones_like(h)) )
+        d_loss_real = tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(h_,tf.zeros_like(h_)) )
         d_entropy = d_loss_fake + d_loss_real
         tf.scalar_summary("d_entropy", d_entropy)
     return d_entropy
+
 def g_loss(h, h_):
     with tf.name_scope('g_loss') as scope:
-        g_entropy = tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(h,tf.ones_like(h)) )
+        g_entropy = tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(h,tf.zeros_like(h)) )
         tf.scalar_summary("g_entropy", g_entropy)
     return g_entropy
 
@@ -220,14 +223,13 @@ with tf.Graph().as_default():
 
     train_op = train(loss + tf.add_n(tf.get_collection('w_loss')) + ALPHA * g_loss)
     d_train_op = d_train(d_loss)
-
-    saver = tf.train.Saver()
-    summary_op = tf.merge_all_summaries()
     
     images = gen_image(result)
     in_image = gen_image(dict(zip(range(0,9), [x_ph])))
     res_image = gen_image(dict(zip(range(0,9), [y_ph])))
 
+    saver = tf.train.Saver()
+    summary_op = tf.merge_all_summaries()
     init = tf.initialize_all_variables()
 
     with tf.Session() as sess:
@@ -262,13 +264,14 @@ with tf.Graph().as_default():
             if step % 10 == 0:
                 # output results
                 result = sess.run([summary_op, loss, g_loss, d_loss, acc], feed_dict = test_feed)
+                summary_str = result[0];
+                summary_writer.add_summary(summary_str,step)
+
                 print("loss at step %s: %.10f" % (step, result[1]))
                 print("g_loss : %.10f" % result[2])
                 print("d_loss : %.10f" % result[3])
                 print("accuracy : %f" % result[4])
                 print("")
-                summary_str = result[0];
-                summary_writer.add_summary(summary_str,step)
                 
                 # save image
                 num = step/10
