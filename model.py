@@ -9,7 +9,7 @@ from utils import *
 
 class dganet(object):
     def __init__(self, sess, image_h=128, image_w=128,
-            batch_size=10, k_num=3,
+            batch_size=10, k_num=1,
             g_dim=16, d_dim=16, input_ch=3, output_ch=1,
             dataset_dir=None, checkpoint_dir=None, outdata_dir=None):
 
