@@ -37,10 +37,10 @@ def pool(x, k=2, name='pooling'):
     with tf.name_scope(name) as scope:
         return tf.nn.max_pool(x, ksize=[1, k, k, 1], strides=[1, 2, 2, 1], padding='SAME')
 
-def deconv(image, output_shape, name, c=3, k=2, stddev=0.02, wd=0.00001, bn=True):
+def deconv(image, output_shape, name, c=3, k=2, stddev=0.002, wd=0.00001, bn=True):
     with tf.name_scope(name) as scope:
         W = tf.Variable(tf.truncated_normal([c, c, output_shape[-1], image.get_shape().dims[-1].value], stddev=stddev))    
-        b = tf.Variable(tf.constant(0.0, shape=[output_shape[-1]]))
+        b = tf.Variable(tf.constant(-0.5, shape=[output_shape[-1]]))
         y = tf.nn.deconv2d(image, W, output_shape=output_shape, strides=[1,k,k,1], padding='SAME') + b
         if wd:
             weight_decay = tf.mul(tf.nn.l2_loss(W), wd, name='weight_loss')

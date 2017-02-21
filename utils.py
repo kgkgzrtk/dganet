@@ -10,8 +10,8 @@ def l2_loss(y, y_):
 
 def d_loss(h, h_):
     with tf.name_scope('d_loss') as scope:
-        d_entropy = 0.5 * tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(h, 0.9*tf.ones_like(h)) )
-        d_entropy += 0.5 * tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(h_, tf.zeros_like(h_)+0.1) )
+        d_entropy = tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(h, tf.ones_like(h)*0.9) )
+        d_entropy += tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(h_, tf.zeros_like(h_)) )
         return d_entropy
 
 def g_loss(h, h_):
