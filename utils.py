@@ -48,4 +48,9 @@ def gen_image(result):
         encoded_image[key] = tf.image.encode_png(tf.concat(0, rows))
     return encoded_image
 
+def disp_image(image):
+    image = tf.cast(tf.mul(image, 255.), tf.uint8)
+    image = [tf.squeeze(im, [0]) for im in tf.split(0, 10, image)]
+    return tf.image.encode_png(image[0])
+
 
