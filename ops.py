@@ -2,54 +2,48 @@
 import tensorflow as tf
 
 def batch_norm(input_, name='bn'):
-    with tf.name_scope(name) as scope:
+    with tf.variable_scope(name) as scope:
         shape = input_.get_shape().dims[3].value
         eps = 1e-5
-        gamma = tf.Variable(tf.truncated_normal([shape], stddev=0.1))
-        beta = tf.Variable(tf.truncated_normal([shape], stddev=0.1))
+        gamma = tf.get_variable('gamma', [shape], initializer=tf.truncated_normal_initializer(stddev=0.1))
+        beta = tf.get_variable('beta', [shape], initializer=tf.truncated_normal_initializer(stddev=0.1))
         mean, variance = tf.nn.moments(input_, [0, 1, 2])
         return gamma * (input_ - mean) / tf.sqrt(variance + eps) + beta
 
 def lrelu(x, leak=0.2, name="lrelu"):
-    with tf.name_scope(name) as scope:
+    with tf.variable_scope(name) as scope:
         return tf.maximum(x, leak*x)
 
 def linear(input_, output_size, stddev=0.02, name='linear_layer'):
-    with tf.name_scope(name) as scope:
+    with tf.variable_scope(name) as scope:
         shape = input_.get_shape().dims
 
-        matrix = tf.Variable(tf.truncated_normal([shape[1].value, output_size], stddev=stddev))
-        bias = tf.Variable(tf.constant(0.0, shape=[output_size]))
+        matrix = tf.get_variable('matrix', [shape[1].value, output_size], initializer=tf.truncated_normal_initializer(stddev=stddev))
+        bias = tf.get_variable('bias', [output_size], initializer=tf.constant_initializer(0.0))
         return tf.matmul(input_, matrix) + bias
 
-def conv(image, out_dim, name, c=3, k=1, stddev=0.02, wd=0.0001, bn=True):
-    with tf.name_scope(name) as scope:
-        W = tf.Variable(tf.truncated_normal([c, c, image.get_shape().dims[-1].value, out_dim], stddev=stddev))
-        b = tf.Variable(tf.constant(0.0, shape=[out_dim]))
-        y = tf.nn.conv2d(image, W, strides=[1, k, k, 1], padding='SAME') + b
-        if wd:
-            weight_decay = tf.mul(tf.nn.l2_loss(W), wd, name='weight_loss')
-            tf.add_to_collection('w_loss', weight_decay)
+def conv(image, out_dim, name, c=3, k=1, stddev=0.02, bn=True, padding='SAME'):
+    with tf.variable_scope(name) as scope:
+        W = tf.get_variable('w', [c, c, image.get_shape().dims[-1].value, out_dim], initializer=tf.truncated_normal_initializer(stddev=stddev))
+        b = tf.get_variable('b', [out_dim], initializer=tf.constant_initializer(0.0))
+        y = tf.nn.conv2d(image, W, strides=[1, k, k, 1], padding=padding) + b
         if bn: return batch_norm(y)
         else: return y
 
 def pool(x, k=2, name='pooling'):
-    with tf.name_scope(name) as scope:
+    with tf.variable_scope(name) as scope:
         return tf.nn.max_pool(x, ksize=[1, k, k, 1], strides=[1, 2, 2, 1], padding='SAME')
 
-def deconv(image, output_shape, name, c=3, k=1, stddev=0.02, wd=0.0001, bn=True):
-    with tf.name_scope(name) as scope:
-        W = tf.Variable(tf.truncated_normal([c, c, output_shape[-1], image.get_shape().dims[-1].value], stddev=stddev))    
-        b = tf.Variable(tf.constant(-0.5, shape=[output_shape[-1]]))
+def deconv(image, output_shape, name, c=3, k=1, stddev=0.02, bn=True):
+    with tf.variable_scope(name) as scope:
+        W = tf.get_variable('w', [c, c, output_shape[-1], image.get_shape().dims[-1].value], initializer=tf.truncated_normal_initializer(stddev=stddev))
+        b = tf.get_variable('b', [output_shape[-1]], initializer=tf.constant_initializer(0.0))
         y = tf.nn.deconv2d(image, W, output_shape=output_shape, strides=[1,k,k,1], padding='SAME') + b
-        if wd:
-            weight_decay = tf.mul(tf.nn.l2_loss(W), wd, name='weight_loss')
-            tf.add_to_collection('w_loss', weight_decay)
         if bn: return batch_norm(y)
         else: return y
 
 def resize_conv(image, output_shape, name, c=3, k=1, bn=True):
-    image = tf.image.resize_images(image, output_shape[1], output_shape[2])
+    image = tf.image.resize_images(image, [output_shape[1], output_shape[2]])
     y = conv(image, output_shape[-1], name=name, c=c, k=k, bn=bn)
     return y
 
