@@ -42,6 +42,10 @@ def deconv(image, output_shape, name, c=3, k=1, stddev=0.02, bn=True):
         if bn: return batch_norm(y)
         else: return y
 
+def gaussian_noise_layer(x, std=0.1):
+    noise = tf.random_normal(shape=tf.shape(x), mean=0.0, stddev=std) 
+    return x + noise
+
 def resize_conv(image, output_shape, name, c=3, k=1, bn=True):
     image = tf.image.resize_images(image, [output_shape[1], output_shape[2]])
     y = conv(image, output_shape[-1], name=name, c=c, k=k, bn=bn)

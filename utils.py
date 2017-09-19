@@ -9,7 +9,6 @@ def mse_loss(y, y_):
 
 def l2_loss(y, y_):
     loss = tf.nn.l2_loss(y - y_)
-    tf.summary.scalar('l2_loss', loss)
     return loss
 
 def d_loss_real(h):
@@ -24,6 +23,9 @@ def d_loss_fake(h):
 def g_loss(h):
     g_entropy = tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(logits=h, labels=tf.ones_like(h)) )
     return g_entropy
+
+def g_loss_(h):
+    return tf.reduce_mean( -tf.log(h) )
 
 def disc_acc(h, h_):
     accuracy = tf.reduce_mean(tf.concat(0,[(1. - h_), h]))
