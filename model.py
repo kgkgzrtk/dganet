@@ -1,15 +1,17 @@
-# -*- coding: utf-8 -*-
 import os
 import cv2
 import numpy as np
 import tensorflow as tf
+import glob
+import re
+from tqdm import tqdm
 
 from ops import *
 from utils import *
 
 class dganet(object):
     def __init__(self, sess, image_h=128, image_w=128,
-            dataset_num=849, test_data_num=129, batch_size=10, k_num=1,
+            batch_size=10, k_num=1,
             g_dim=16, d_dim=16, input_ch=3, output_ch=1,
             dataset_dir=None, checkpoint_dir=None, outdata_dir=None, summary_dir=None):
 
@@ -19,8 +21,6 @@ class dganet(object):
         self.image_w = image_w
         self.image_size = image_h*image_w
         
-        self.dataset_num = dataset_num
-        self.test_data_num = test_data_num
         self.k_num = k_num
 
         self.g_dim = g_dim
@@ -54,16 +54,6 @@ class dganet(object):
         self.d_y_real = self.discriminator(self.x_in, self.y_tar)
         self.d_y_fake = self.discriminator(self.x_in, self.y_out, reuse=True)
 
-        self.loss = l2_loss(self.y_tar , self.y_out)
-        self.d_loss_real = d_loss_real(self.d_y_real)
-        self.d_loss_fake = d_loss_fake(self.d_y_fake)
-        self.d_loss = tf.reduce_mean(tf.concat([[self.d_loss_real], [self.d_loss_fake]],0))
-        self.g_loss = g_loss(self.d_y_fake)
-        self.g_loss_ = g_loss_(self.d_y_fake)
-        
-        self.sum_loss = tf.summary.scalar('l2_loss', self.loss)
-        self.sum_g_loss = tf.summary.scalar('g_loss', self.g_loss)
-        self.sum_d_loss = tf.summary.scalar('d_loss', self.d_loss)
 
         self.sum_img = tf.summary.image('y_out', tf.reshape(self.y_out, [-1, self.y_out.get_shape().dims[1].value, self.y_out.get_shape().dims[2].value, 1]), 10)
 
@@ -71,16 +61,26 @@ class dganet(object):
 
         self.d_vars = [var for var in t_vars if 'disc' in var.name]
         self.g_vars = [var for var in t_vars if 'gen' in var.name]
-
-        print([v.name for v in self.d_vars])
-        print([v.name for v in self.g_vars])
+        
+        self.wd_rate = 5e-5
+        self.weight_penalty = tf.add_n([tf.reduce_sum(tf.abs(w)) for w in self.g_vars]) * self.wd_rate
+        
+        self.c = 0.03
+        self.clip_updates = [w.assign(tf.clip_by_value(w, -self.c, self.c)) for w in self.d_vars]
+        
+        self.loss = l2_loss(self.y_tar , self.y_out)
+        self.g_loss = self.loss + tf.abs(self.loss/tf.reduce_mean(self.d_y_fake))*(-tf.reduce_mean(self.d_y_fake)) + self.weight_penalty
+        self.d_loss = tf.reduce_mean(self.d_y_fake - self.d_y_real)
+        
+        self.sum_loss = tf.summary.scalar('l2_loss', self.loss)
+        self.sum_g_loss = tf.summary.scalar('g_loss', self.g_loss)
+        self.sum_wasser_distance = tf.summary.scalar('wassaer_distance', -self.d_loss)
 
         self.images = gen_image(self.y)
         self.in_image = gen_image(dict(zip(range(0,9), [self.x_in])))
         self.tar_image = gen_image(dict(zip(range(0,9), [self.y_tar])))
         
         self.dd_ =  disp_image(self.y_out)
-        self.init = tf.initialize_all_variables()
         self.merged = tf.summary.merge_all()
         self.saver = tf.train.Saver()
 
@@ -92,28 +92,27 @@ class dganet(object):
             dim = self.d_dim
             image = tf.reshape(image, [-1, self.image_h, self.image_w, 3])
             depth = tf.reshape(depth, [-1, self.image_h, self.image_w, 1])
-            depth = gaussian_noise_layer(depth)
+            depth = gaussian_noise_layer(depth, std=0.01)
             input_ = tf.concat([image, depth],3)
 
-            h0 = lrelu(conv(input_, dim, k=2, name='h0_conv'))
-            h1 = lrelu(conv(h0, dim*2, k=2, name='h1_conv'))
-            h2 = lrelu(conv(h1, dim*4, k=2, name='h2_conv'))
-            h3 = lrelu(conv(h2, dim*8, k=2, name='h3_conv'))
-            h4 = lrelu(conv(h3, dim*16, k=2, name='h4_conv'))
-            h5 = lrelu(conv(h4, dim*32, k=2, name='h5_conv'))
-            l0 = linear(tf.reshape(h2,[self.batch_size, -1]), self.batch_size)
-            #return tf.nn.sigmoid(l0)
+            h0 = lrelu(conv(input_, dim, k=2, bn=False, name='h0_conv'))
+            h1 = lrelu(conv(h0, dim*2, k=2, bn=False, name='h1_conv'))
+            h2 = lrelu(conv(h1, dim*4, k=2, bn=False, name='h2_conv'))
+            h3 = lrelu(conv(h2, dim*8, k=2, bn=False, name='h3_conv'))
+            h4 = lrelu(conv(h3, dim*16, k=2, bn=False, name='h4_conv'))
+            h5 = lrelu(conv(h4, dim*32, k=2, bn=False, name='h5_conv'))
+            l0 = linear(tf.reshape(h5,[self.batch_size, -1]), self.batch_size)
             return l0
 
     def inference(self, input_):
         with tf.variable_scope('gen') as scope:
-            keep_prob = 0.8
+            keep_prob = 0.5
             dim = self.g_dim
             input_ = tf.reshape(input_, [self.batch_size, self.image_h, self.image_w, 3])
             #convolutional layers
 
             y_c0 = conv(input_, dim, c=3, name='c0', bn=False)
-            y_c1 = lrelu(conv(tf.nn.relu(batch_norm(y_c0)), dim * 2, c=3, k=1, name='c1-0'))
+            y_c1 = lrelu(conv(lrelu(batch_norm(y_c0)), dim * 2, c=3, k=1, name='c1-0'))
             y_c1 = lrelu(conv(y_c1, dim * 2, c=3, k=2, name='c1-1'))
             y_c2 = lrelu(conv(y_c1, dim * 4, c=3, k=1, name='c2-0'))
             y_c2 = lrelu(conv(y_c2, dim * 4, c=3, k=2, name='c2-1'))
@@ -127,6 +126,8 @@ class dganet(object):
 
             y_dc0 = lrelu(resize_conv(y_c5, [self.batch_size, self.w_range[4], self.w_range[4], dim * 16], c=3, name='dc0'))
             y_dc0 = lrelu(resize_conv(y_dc0, [self.batch_size, self.w_range[4], self.w_range[4], dim * 16], c=3, name='dc0_'))
+            y_dc0 = tf.nn.dropout(y_dc0, keep_prob)
+
             y_in1 = tf.concat([y_dc0, y_c4],3)
             y_dc1 = lrelu(resize_conv(y_in1, [self.batch_size, self.w_range[3], self.w_range[3], dim * 8], c=3, name='dc1'))
             y_dc1 = lrelu(resize_conv(y_dc1, [self.batch_size, self.w_range[3], self.w_range[3], dim * 8], c=3, name='dc1_'))
@@ -140,12 +141,10 @@ class dganet(object):
             y_in3 = tf.concat([y_dc2, y_c2],3)
             y_dc3 = lrelu(resize_conv(y_in3, [self.batch_size, self.w_range[1], self.w_range[1], dim * 2], c=3, name='dc3'))
             y_dc3 = lrelu(resize_conv(y_dc3, [self.batch_size, self.w_range[1], self.w_range[1], dim * 2], c=3, name='dc3_'))
-            y_dc3 = tf.nn.dropout(y_dc3, keep_prob)
 
             y_in4 = tf.concat([y_dc3, y_c1],3)
             y_dc4 = lrelu(resize_conv(y_in4, [self.batch_size, self.w_range[0], self.w_range[0], dim], c=3, name='dc4'))
             y_dc4 = lrelu(resize_conv(y_dc4, [self.batch_size, self.w_range[0], self.w_range[0], dim], c=3, name='dc4_'))
-            y_dc4 = tf.nn.dropout(y_dc4, keep_prob)
 
             y_in5 = tf.concat([y_dc4, y_c0],3)
             y_dc5 = lrelu(resize_conv(y_in5, [self.batch_size, self.w_range[0], self.w_range[0], dim], c=3, name='dc5'))
@@ -158,69 +157,63 @@ class dganet(object):
 
 
     def train(self, i_lr=0.00002, d_lr=0.00002, train_epoch=1000):
-        self.load_image()
-        
-        #weights = tf.trainable_variables()
-        w_i = self.g_vars
-        l1_penalty = tf.add_n([tf.reduce_sum(tf.abs(w)) for w in w_i]) * 5e-5
-        op_loss = self.loss + l1_penalty
-        g_loss = self.g_loss * self.loss + l1_penalty
+        data_dir = self.get_nyu_dataset()
 
-        #i_train_op = tf.train.AdamOptimizer(1e-3).minimize(self.loss, var_list=list(self.c_vars + self.g_vars))
-        
-        train_op = tf.train.AdamOptimizer(5e-4).minimize(op_loss, var_list=self.g_vars)
-        g_train_op = tf.train.AdamOptimizer(3e-4).minimize(g_loss, var_list=self.g_vars)
-        d_train_op = tf.train.AdamOptimizer(1e-4).minimize(self.d_loss, var_list=self.d_vars)
+        g_train_op = tf.train.RMSPropOptimizer(5e-5).minimize(self.g_loss, var_list=self.g_vars)
+        d_train_op = tf.train.RMSPropOptimizer(5e-5).minimize(self.d_loss, var_list=self.d_vars)
 
         tf.initialize_all_variables().run()
         #self.load_model("dganet_e00502.model")
 
-        #gl = 10.
-        #dl = 10.
         batch_size = self.batch_size
         step = 0
         train_loss = []
         g_train_loss = []
         d_train_loss = []
-
+        
+        self.get_nyu_dataset()
+        
+        self.test_image = self.load_image(self.test_image_dir[:batch_size])
+        self.test_depth = self.load_image(self.test_depth_dir[:batch_size])
         # save input & target image
-        in_img = self.sess.run(self.in_image[0], {self.x: self.test_image[:10]})
+        in_img = self.sess.run(self.in_image[0], {self.x: self.test_image[:batch_size]})
         with open(self.outdata_dir+"/init"+"/input.png", 'wb') as f:
             f.write(in_img)
-        tar_img = self.sess.run(self.tar_image[0], {self.y_: self.test_depth[:10]})
+        tar_img = self.sess.run(self.tar_image[0], {self.y_: self.test_depth[:batch_size]})
         with open(self.outdata_dir+"/init"+"/target.png", 'wb') as f:
             f.write(tar_img)
+
+        print("train : %d"%len(self.train_image_dir))
+        print("train-d : %d"%len(self.train_depth_dir))
+        print("test : %d"%len(self.test_image_dir))
+        print("test-d : %d"%len(self.test_depth_dir))
+
         
-        #pre-d_train
-        """
-        for epoch in range(300):
-            for i in range(len(self.train_image)//batch_size):
-                train_feed = {self.x: self.train_image[i:i+batch_size], self.y_: self.train_depth[i:i+batch_size]}
-                _, l = self.sess.run([train_op, self.loss], feed_dict=train_feed)
-            print("[pre-train] epoch:%d loss=%.10f"%(epoch,l))
-         
-        for epoch in range(100):
-            for i in range(len(self.train_image)//batch_size):
-                train_feed = {self.x: self.train_image[i:i+batch_size], self.y_: self.train_depth[i:i+batch_size]}
-                _, dl = self.sess.run([d_train_op, self.d_loss], feed_dict=train_feed)
-            print("[pre-d_train] epoch:%d d_loss=%.10f"%(epoch,dl))
-        """
         for epoch in range(train_epoch):
             
-            eperm = np.random.permutation(len(self.test_image))
-            test_feed = {self.x: self.test_image[eperm[:batch_size]], self.y_: self.test_depth[eperm[:batch_size]]}
+            eperm = np.random.permutation(len(self.test_image_dir))
+            self.test_image = self.load_image(self.test_image_dir[eperm[:batch_size]])
+            self.test_depth = self.load_image(self.test_depth_dir[eperm[:batch_size]])
+            test_feed = {self.x: self.test_image, self.y_: self.test_depth}
 
-            for i in range(len(self.train_image)//batch_size):
-                if epoch < 300:
-                    perm = [x for x in range(len(self.train_image))]
+            for i in tqdm(range(len(self.train_image_dir)//batch_size)):
+                if epoch < 100:
+                    perm = [x for x in range(len(self.train_image_dir))]
                 else:
-                    perm = np.random.permutation(len(self.train_image))
+                    perm = np.random.permutation(len(self.train_image_dir))
                 batch = batch_size*i
+                
+                #print(perm[batch:batch+batch_size])
+                self.train_image = self.load_image(self.train_image_dir[perm[batch:batch+batch_size]])
+                self.train_depth = self.load_image(self.train_depth_dir[perm[batch:batch+batch_size]])
+                train_feed = {self.x: self.train_image, self.y_: self.train_depth}
+                
+                _, dl, s_w = self.sess.run([d_train_op, self.d_loss, self.sum_wasser_distance], feed_dict = train_feed)
+                self.sess.run(self.clip_updates)
 
-                train_feed = {self.x: self.train_image[perm[batch:batch+batch_size]], self.y_: self.train_depth[perm[batch:batch+batch_size]]}
-                _, tl, gl, s_l, s_gl  = self.sess.run([g_train_op, self.loss, self.g_loss, self.sum_loss, self.sum_g_loss], feed_dict = train_feed)
-                _, dl, s_dl = self.sess.run([d_train_op, self.d_loss, self.sum_d_loss], feed_dict = train_feed)
-                train_loss.append(tl/batch_size)
+                _, l, s_l, gl, s_gl  = self.sess.run([g_train_op, self.loss, self.sum_loss, self.g_loss, self.sum_g_loss], feed_dict = train_feed)
+
+                train_loss.append(l/batch_size)
                 g_train_loss.append(gl)
                 d_train_loss.append(dl)
 
@@ -228,7 +221,7 @@ class dganet(object):
                 # output results
 
                 test_summary, vl, test_img = self.sess.run([self.merged, self.loss, self.sum_img], feed_dict = test_feed)
-                train_summary, tl, train_img = self.sess.run([self.merged, self.loss, self.sum_img], feed_dict = train_feed)
+                train_summary, cl, train_img = self.sess.run([self.merged, self.loss, self.sum_img], feed_dict = train_feed)
                 g_train_summary, gl = self.sess.run([self.merged, self.g_loss], feed_dict = train_feed)
                 d_train_summary, dl = self.sess.run([self.merged, self.d_loss], feed_dict = train_feed)
 
@@ -266,48 +259,38 @@ class dganet(object):
         img_out = cv2.cvtColor(img_yuv, cv2.COLOR_YUV2BGR)
         return img_out
 
-    
-    def load_image(self):
+
+    def get_nyu_dataset(self):
+        txt_dir = [map(lambda x: x.rstrip("\n"), open(t,'r').readlines()) for t in glob.glob(self.dataset_dir + "/*/*.txt")]
+        img_dir_list = []
+        for f_dir in txt_dir:
+            rd_imgs = [f for f in f_dir if re.match("^[rd].*((ppm)|(pgm))$",f)]
+            data_list = [(rd_imgs[i], rd_imgs[i+1]) if rd_imgs[i][0]=="r" else (rd_imgs[i+1], rd_imgs[i]) for i in range(len(rd_imgs)-1) if rd_imgs[i][0]!=rd_imgs[i+1][0]]
+            img_dir_list.append(data_list)
+        img_dir_list = np.concatenate(img_dir_list)
+        #np.random.shuffle(img_dir_list)
+        test_list = [v for i, v in enumerate(img_dir_list) if i%7==0]
+        train_list = [v for i, v in enumerate(img_dir_list) if i%7!=0]
+        (self.test_image_dir, self.test_depth_dir) = np.asarray(list(zip(*test_list)))
+        (self.train_image_dir, self.train_depth_dir) = np.asarray(list(zip(*train_list)))
+
+
+    def load_image(self, img_dirs):
         # input image data
-        train_image = []
-        train_depth = []
-        test_image = []
-        test_depth = []
-
-        for i in range(self.dataset_num):
-            col_dir = self.dataset_dir + "/color/img_" + str(i).rjust(4,"0") + ".png"
-            dep_dir = self.dataset_dir + "/depth/img_" + str(i).rjust(4,"0") + "_abs_smooth.png"
-            col_img = cv2.imread(col_dir)
-            dep_img = cv2.imread(dep_dir, cv2.IMREAD_GRAYSCALE)
-            col_img_hist = self.eq_hist(col_img)
-            col_img = cv2.resize(col_img, (self.image_h, self.image_w), interpolation = cv2.INTER_AREA)
-            dep_img = cv2.resize(dep_img, (self.image_h, self.image_w), interpolation = cv2.INTER_AREA)
-            col_img_hist = cv2.resize(col_img_hist, (self.image_h, self.image_w), interpolation = cv2.INTER_AREA)
-
-            train_image.append(col_img.flatten().astype(np.float32)/255.)
-            train_depth.append(dep_img.flatten().astype(np.float32)/255.)
-            train_image.append(col_img_hist.flatten().astype(np.float32)/255.)
-            train_depth.append(dep_img.flatten().astype(np.float32)/255.)
-
-        data_list = list(zip(train_image, train_depth))
-        test_list = [v for i, v in enumerate(data_list) if i%7==0]
-        train_list = [v for i, v in enumerate(data_list) if i%7!=0]
-        (test_image, test_depth) = list(zip(*test_list))
-        (train_image, train_depth) = list(zip(*train_list))
-
-
-        self.train_image = np.asarray(train_image)
-        self.train_depth = np.asarray(train_depth)
-        self.test_image = np.asarray(test_image)
-        self.test_depth = np.asarray(test_depth)
-
-        print("Finish load training images:")
-        print(" train : %d images"%len(self.train_image))
-        print(" test : %d images"%len(self.test_image))
-        print("")
+        img_dirs = [glob.glob(self.dataset_dir + "/*/" + fn) for fn in img_dirs]
+        img_dirs = np.concatenate(img_dirs)
+        img_list = []
+        for img_dir in img_dirs:
+            if img_dir[0]=="r": img = cv2.imread(img_dir)
+            else: img = cv2.imread(img_dir, -1)
+            img = cv2.resize(img, (self.image_h, self.image_w), interpolation = cv2.INTER_AREA)
+            img = img.flatten().astype(np.float32)
+            img_list.append(img/np.amax(img))
+            
+        return np.asarray(img_list)
 
     def save_model(self, epoch):
-        model_name = "U-GANv3_e%05d.model" % epoch
+        model_name = "uw-gan_e%05d.model" % epoch
         if not os.path.exists(self.checkpoint_dir): os.makedirs(self.checkpoint_dir)
         self.saver.save(self.sess, os.path.join(self.checkpoint_dir, model_name))
 
