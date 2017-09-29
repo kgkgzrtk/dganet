@@ -60,4 +60,3 @@ def disp_image(image):
     image = [tf.squeeze(im, [0]) for im in tf.split(image, 10, 0)]
     return tf.image.encode_png(image[0])
 
-
