@@ -81,7 +81,7 @@ class dganet(object):
         #L2_Regularization 
         self.L2_weight_penalty = tf.add_n([tf.nn.l2_loss(w) for w in self.g_vars if 'w' in w.name]) * self.l2_reg_scale
 
-        self.weight_penalty = self.L1_weight_penalty #+ self.L2_weight_penalty
+        self.weight_penalty = self.L1_weight_penalty + self.L2_weight_penalty
         
         gp = self.gradient_penalty() * self.gp_scale
         self.clip_updates = [w.assign(tf.clip_by_value(w, -self.c, self.c)) for w in self.d_vars]
