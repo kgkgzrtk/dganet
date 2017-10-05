@@ -12,8 +12,8 @@ from utils import *
 
 class dganet(object):
     def __init__(self, sess, image_h=128, image_w=128, batch_size=10,
-            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, wd_rate=3e-2, gp_scale=10.,
-            g_dim=64, d_dim=64, K=0.5, critic_k=5, c=0.01, keep_prob=0.5, noise_std=0,
+            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, l1_reg_scale=3e-3, l2_reg_scale=1e-4, gp_scale=10.,
+            g_dim=64, d_dim=64, K=0.5, critic_k=1, c=0.01, keep_prob=0.5, noise_std=0,
             dataset_path=None, checkpoint_dir=None, outdata_dir=None, summary_dir=None):
 
         self.sess = sess
@@ -33,7 +33,8 @@ class dganet(object):
         self.K = K
         self.critic_k = critic_k
         self.c = c
-        self.wd_rate = wd_rate
+        self.l1_reg_scale = l1_reg_scale
+        self.l2_reg_scale = l2_reg_scale
         self.gp_scale = gp_scale
         self.keep_prob = keep_prob
         self.noise_std = noise_std
@@ -75,17 +76,24 @@ class dganet(object):
         self.g_vars = [var for var in t_vars if 'gen' in var.name]
         
         #L1_Regularization
-        self.weight_penalty = tf.add_n([tf.reduce_sum(tf.abs(w)) for w in self.g_vars if 'w' in w.name]) * self.wd_rate
+        self.L1_weight_penalty = tf.add_n([tf.reduce_sum(tf.abs(w)) for w in self.g_vars if 'w' in w.name]) * self.l1_reg_scale
         
-        gp = self.gradient_penalty() + self.gp_scale
+        #L2_Regularization 
+        self.L2_weight_penalty = tf.add_n([tf.nn.l2_loss(w) for w in self.g_vars if 'w' in w.name]) * self.l2_reg_scale
+
+        self.weight_penalty = self.L1_weight_penalty #+ self.L2_weight_penalty
+        
+        gp = self.gradient_penalty() * self.gp_scale
         self.clip_updates = [w.assign(tf.clip_by_value(w, -self.c, self.c)) for w in self.d_vars]
         
         #L2_norm
-        self.loss = tf.reduce_mean(tf.reduce_sum(tf.square(self.dist_y_tar - self.y_out)/2., [1, 2, 3]))
+        loss_ = tf.reduce_sum(tf.square(self.dist_y_tar - self.y_out)/2., [1, 2, 3])
+        self.loss = tf.reduce_mean(loss_)
         
         #L2_loss + (L2_loss/GAN_loss)*GAN_LOSS + L1_reg
-        gan_loss = -tf.reduce_mean(tf.reduce_sum(self.d_y_fake, [1, 2, 3]))
-        self.g_loss = self.loss + self.K * tf.abs(self.loss/gan_loss) * gan_loss + self.weight_penalty
+        gan_loss_ = tf.reduce_sum(-self.d_y_fake, [1, 2, 3])
+        gan_loss = -tf.reduce_mean(gan_loss_)
+        self.g_loss = tf.reduce_mean(loss_ + self.K * tf.abs(self.loss/gan_loss) * gan_loss_) + self.weight_penalty
         #Critic loss + gp
         self.d_loss = tf.reduce_mean(tf.reduce_sum(self.d_y_fake - self.d_y_real, [1, 2, 3])) + gp
         
@@ -122,7 +130,6 @@ class dganet(object):
             h1 = lrelu(conv(h0, dim*2, k=2, bn=False, name='h1_conv'))
             h2 = lrelu(conv(h1, dim*4, k=2, bn=False, name='h2_conv'))
             h3 = lrelu(conv(h2, dim*8, k=2, bn=False, name='h3_conv'))
-            #l0 = linear(tf.reshape(h3,[self.batch_size, -1]), self.batch_size)
             h4 = tf.sigmoid(conv(h3, 1, k=1, bn=False, name='h4_conv'))
             return h4
 
