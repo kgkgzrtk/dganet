@@ -11,24 +11,30 @@ from ops import *
 from utils import *
 
 class dganet(object):
-    def __init__(self, sess, image_h=128, image_w=128,
-            batch_size=10,input_ch=3, output_ch=1,
-            g_dim=16, d_dim=16, K=0.5, wd_rate=0.001, c=0.01, keep_prob=0.5, noise_std=0.005,
+    def __init__(self, sess, image_h=128, image_w=128, batch_size=10,
+            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, wd_rate=3e-2, gp_scale=10.,
+            g_dim=64, d_dim=64, K=0.5, critic_k=5, c=0.01, keep_prob=0.5, noise_std=0,
             dataset_path=None, checkpoint_dir=None, outdata_dir=None, summary_dir=None):
 
         self.sess = sess
         self.batch_size = batch_size
+        self.read_image_h = int(image_h * 1.1)
+        self.read_image_w = int(image_w * 1.1)
         self.image_h = image_h
         self.image_w = image_w
-        self.image_size = image_h*image_w
+        self.image_size = self.read_image_h * self.read_image_w
         self.input_ch = input_ch
         self.output_ch = output_ch
         
+        self.g_lr = g_lr
+        self.d_lr = d_lr
         self.g_dim = g_dim
         self.d_dim = d_dim
         self.K = K
+        self.critic_k = critic_k
         self.c = c
         self.wd_rate = wd_rate
+        self.gp_scale = gp_scale
         self.keep_prob = keep_prob
         self.noise_std = noise_std
         self.seed = 123
@@ -44,15 +50,16 @@ class dganet(object):
     def build(self):
 
         self.image_keys = ['y_x', 'y_c1', 'y_c2', 'y_c4', 'y_in2', 'y_in4', 'y_in5', 'y_dc6']
-        self.w_range = [128, 64, 32, 16, 8, 4]
+        self.w_range = [128, 64, 32, 16, 8, 4, 2, 1]
 
         self.x = tf.placeholder(tf.float32, [None, self.image_size * 3], name="x")
         self.y_ = tf.placeholder(tf.float32, [None, self.image_size], name="y_")
 
-        self.x_in = tf.reshape(self.x, [self.batch_size, self.image_h, self.image_w, 3])
-        self.y_tar = tf.reshape(self.y_, [self.batch_size, self.image_h, self.image_w, 1])
-
-        self.dist_x, self.dist_y_tar = self.generate_image_batch(self.x_in, self.y_tar)
+        self.x_in = tf.reshape(self.x, [self.batch_size, self.read_image_h, self.read_image_w, 3])
+        self.y_tar = tf.reshape(self.y_, [self.batch_size, self.read_image_h, self.read_image_w, 1])
+        
+        self.test = tf.placeholder(tf.int32)
+        self.dist_x, self.dist_y_tar = self.generate_image_batch(self.x_in, self.y_tar, self.test)
 
         self.y = self.inference(self.dist_x)
         self.y_out = self.y['y_dc6']
@@ -61,24 +68,36 @@ class dganet(object):
         self.d_y_fake = self.discriminator(self.dist_x, self.y_out, reuse=True)
 
 
-        self.sum_img = tf.summary.image('y_out', tf.reshape(self.y_out, [-1, self.y_out.get_shape().dims[1].value, self.y_out.get_shape().dims[2].value, 1]), 10)
 
         t_vars = tf.trainable_variables()
 
         self.d_vars = [var for var in t_vars if 'disc' in var.name]
         self.g_vars = [var for var in t_vars if 'gen' in var.name]
         
-        self.weight_penalty = tf.add_n([tf.reduce_sum(tf.abs(w)) for w in self.g_vars]) * self.wd_rate
+        #L1_Regularization
+        self.weight_penalty = tf.add_n([tf.reduce_sum(tf.abs(w)) for w in self.g_vars if 'w' in w.name]) * self.wd_rate
         
+        gp = self.gradient_penalty() + self.gp_scale
         self.clip_updates = [w.assign(tf.clip_by_value(w, -self.c, self.c)) for w in self.d_vars]
         
-        self.loss = l2_loss(self.dist_y_tar , self.y_out)
-        self.g_loss = self.loss + self.K * tf.abs(self.loss/tf.reduce_mean(self.d_y_fake))*(-tf.reduce_mean(self.d_y_fake)) + self.weight_penalty
-        self.d_loss = tf.reduce_mean(self.d_y_fake - self.d_y_real)
+        #L2_norm
+        self.loss = tf.reduce_mean(tf.reduce_sum(tf.square(self.dist_y_tar - self.y_out)/2., [1, 2, 3]))
         
-        self.sum_loss = tf.summary.scalar('l2_loss', self.loss)
-        self.sum_g_loss = tf.summary.scalar('g_loss', self.g_loss)
-        self.sum_wasser_distance = tf.summary.scalar('wassaer_distance', -self.d_loss)
+        #L2_loss + (L2_loss/GAN_loss)*GAN_LOSS + L1_reg
+        gan_loss = -tf.reduce_mean(tf.reduce_sum(self.d_y_fake, [1, 2, 3]))
+        self.g_loss = self.loss + self.K * tf.abs(self.loss/gan_loss) * gan_loss + self.weight_penalty
+        #Critic loss + gp
+        self.d_loss = tf.reduce_mean(tf.reduce_sum(self.d_y_fake - self.d_y_real, [1, 2, 3])) + gp
+        
+        tf.summary.scalar('l2_loss', self.loss)
+        tf.summary.scalar('g_loss', self.g_loss)
+        tf.summary.scalar('d_loss', self.d_loss)
+        tf.summary.scalar('gan_loss', gan_loss)
+        tf.summary.scalar('wassaer_distance', tf.reduce_mean(tf.reduce_sum(self.d_y_real - self.d_y_fake, [1, 2, 3])))
+        tf.summary.scalar('g_reg', self.weight_penalty)
+        tf.summary.scalar('gradient_penalty', gp)
+        
+        tf.summary.image('y_out', tf.reshape(self.y_out, [-1, self.y_out.get_shape().dims[1].value, self.y_out.get_shape().dims[2].value, 1]), 10)
 
         self.images = gen_image(self.y)
         self.in_image = gen_image(dict(zip(range(0,9), [self.x_in])))
@@ -103,10 +122,9 @@ class dganet(object):
             h1 = lrelu(conv(h0, dim*2, k=2, bn=False, name='h1_conv'))
             h2 = lrelu(conv(h1, dim*4, k=2, bn=False, name='h2_conv'))
             h3 = lrelu(conv(h2, dim*8, k=2, bn=False, name='h3_conv'))
-            h4 = lrelu(conv(h3, dim*16, k=2, bn=False, name='h4_conv'))
-            h5 = lrelu(conv(h4, dim*32, k=2, bn=False, name='h5_conv'))
-            l0 = linear(tf.reshape(h5,[self.batch_size, -1]), self.batch_size)
-            return l0
+            #l0 = linear(tf.reshape(h3,[self.batch_size, -1]), self.batch_size)
+            h4 = tf.sigmoid(conv(h3, 1, k=1, bn=False, name='h4_conv'))
+            return h4
 
     def inference(self, input_):
         with tf.variable_scope('gen') as scope:
@@ -115,61 +133,51 @@ class dganet(object):
             input_ = tf.reshape(input_, [self.batch_size, self.image_h, self.image_w, 3])
             #convolutional layers
 
-            y_c0 = conv(input_, dim, c=3, name='c0', bn=False)
-            y_c1 = lrelu(conv(lrelu(batch_norm(y_c0)), dim * 2, c=3, k=1, name='c1-0'))
-            y_c1 = lrelu(conv(y_c1, dim * 2, c=3, k=2, name='c1-1'))
-            y_c2 = lrelu(conv(y_c1, dim * 4, c=3, k=1, name='c2-0'))
-            y_c2 = lrelu(conv(y_c2, dim * 4, c=3, k=2, name='c2-1'))
-            y_c3 = lrelu(conv(y_c2, dim * 8, c=3, k=1, name='c3-0'))
-            y_c3 = lrelu(conv(y_c3, dim * 8, c=3, k=2, name='c3-1'))
-            y_c4 = lrelu(conv(y_c3, dim * 16, c=3, k=1, name='c4-0'))
-            y_c4 = lrelu(conv(y_c4, dim * 16, c=3, k=2, name='c4-1'))
-            y_c5 = lrelu(conv(y_c4, dim * 32, c=3, k=1, name='c5-0'))
-            y_c5 = lrelu(conv(y_c5, dim * 32, c=3, k=2, name='c5-1'))
+            y_c0 = conv(input_, dim, c=4, k=2, name='c0', bn=False)
+            y_c1 = conv(lrelu(y_c0), dim * 2, k=2, name='c1')
+            y_c2 = conv(lrelu(y_c1), dim * 4, k=2, name='c2')
+            y_c3 = conv(lrelu(y_c2), dim * 8, k=2, name='c3')
+            y_c4 = conv(lrelu(y_c3), dim * 8, k=2, name='c4')
+            y_c5 = conv(lrelu(y_c4), dim * 8, k=2, name='c5')
+            y_c6 = conv(lrelu(y_c5), dim * 8, k=2, name='c6')
 
 
-            y_dc0 = lrelu(resize_conv(y_c5, [self.batch_size, self.w_range[4], self.w_range[4], dim * 16], c=3, name='dc0'))
-            y_dc0 = lrelu(resize_conv(y_dc0, [self.batch_size, self.w_range[4], self.w_range[4], dim * 16], c=3, name='dc0_'))
+            y_dc0 = resize_conv(lrelu(y_c6), [self.batch_size, self.w_range[6], self.w_range[6], dim * 8 * 2], name='dc0')
             y_dc0 = tf.nn.dropout(y_dc0, keep_prob)
 
-            y_in1 = tf.concat([y_dc0, y_c4],3)
-            y_dc1 = lrelu(resize_conv(y_in1, [self.batch_size, self.w_range[3], self.w_range[3], dim * 8], c=3, name='dc1'))
-            y_dc1 = lrelu(resize_conv(y_dc1, [self.batch_size, self.w_range[3], self.w_range[3], dim * 8], c=3, name='dc1_'))
+            y_in1 = tf.concat([y_dc0, y_c5],3)
+            y_dc1 = resize_conv(lrelu(y_in1), [self.batch_size, self.w_range[5], self.w_range[5], dim * 8 * 2], name='dc1')
             y_dc1 = tf.nn.dropout(y_dc1, keep_prob)
 
-            y_in2 = tf.concat([y_dc1, y_c3],3)
-            y_dc2 = lrelu(resize_conv(y_in2, [self.batch_size, self.w_range[2], self.w_range[2], dim * 4], c=3, name='dc2'))
-            y_dc2 = lrelu(resize_conv(y_dc2, [self.batch_size, self.w_range[2], self.w_range[2], dim * 4], c=3, name='dc2_'))
+            y_in2 = tf.concat([y_dc1, y_c4],3)
+            y_dc2 = resize_conv(lrelu(y_in2), [self.batch_size, self.w_range[4], self.w_range[4], dim * 8 * 2], name='dc2')
             y_dc2 = tf.nn.dropout(y_dc2, keep_prob)
 
-            y_in3 = tf.concat([y_dc2, y_c2],3)
-            y_dc3 = lrelu(resize_conv(y_in3, [self.batch_size, self.w_range[1], self.w_range[1], dim * 2], c=3, name='dc3'))
-            y_dc3 = lrelu(resize_conv(y_dc3, [self.batch_size, self.w_range[1], self.w_range[1], dim * 2], c=3, name='dc3_'))
-            y_dc3 = tf.nn.dropout(y_dc3, keep_prob)
+            y_in3 = tf.concat([y_dc2, y_c3],3)
+            y_dc3 = resize_conv(lrelu(y_in3), [self.batch_size, self.w_range[3], self.w_range[3], dim * 4 * 2], name='dc3')
 
-            y_in4 = tf.concat([y_dc3, y_c1],3)
-            y_dc4 = lrelu(resize_conv(y_in4, [self.batch_size, self.w_range[0], self.w_range[0], dim], c=3, name='dc4'))
-            y_dc4 = lrelu(resize_conv(y_dc4, [self.batch_size, self.w_range[0], self.w_range[0], dim], c=3, name='dc4_'))
-            y_dc4 = tf.nn.dropout(y_dc4, keep_prob)
+            y_in4 = tf.concat([y_dc3, y_c2],3)
+            y_dc4 = resize_conv(lrelu(y_in4), [self.batch_size, self.w_range[2], self.w_range[2], dim * 2 * 2], name='dc4')
 
-            y_in5 = tf.concat([y_dc4, y_c0],3)
-            y_dc5 = lrelu(resize_conv(y_in5, [self.batch_size, self.w_range[0], self.w_range[0], dim], c=3, name='dc5'))
-            y_dc6 = tf.nn.sigmoid(resize_conv(y_dc5, [self.batch_size, self.w_range[0], self.w_range[0], 1], c=1, name='dc6', bn=False))
+            y_in5 = tf.concat([y_dc4, y_c1],3)
+            y_dc5 = deconv(lrelu(y_in5), [self.batch_size, self.w_range[1], self.w_range[1], dim * 1 * 2], name='dc5')
+
+            y_in6 = tf.concat([y_dc5, y_c0],3)
+            y_dc6 = tf.sigmoid(resize_conv(lrelu(y_in6), [self.batch_size, self.w_range[0], self.w_range[0], self.output_ch], name='dc6'))
 
             y = [input_, y_c1 ,y_c2, y_c4, y_in2, y_in4, y_in5, y_dc6]
             
-
             return dict(zip(self.image_keys, y))
 
 
-    def train(self, i_lr=0.00002, d_lr=0.00002, train_epoch=1000):
+    def train(self, train_epoch):
 
         self.get_nyu_dataset()
 
-        g_train_op = tf.train.RMSPropOptimizer(5e-5).minimize(self.g_loss, var_list=self.g_vars)
-        d_train_op = tf.train.RMSPropOptimizer(5e-5).minimize(self.d_loss, var_list=self.d_vars)
+        g_train_op = tf.train.AdamOptimizer(self.g_lr, beta1=0., beta2=0.9).minimize(self.g_loss, var_list=self.g_vars)
+        d_train_op = tf.train.AdamOptimizer(self.d_lr, beta1=0., beta2=0.9).minimize(self.d_loss, var_list=self.d_vars)
 
-        tf.initialize_all_variables().run()
+        tf.global_variables_initializer().run()
         #self.load_model("dganet_e00502.model")
 
         batch_size = self.batch_size
@@ -191,10 +199,10 @@ class dganet(object):
         for epoch in range(train_epoch):
             
             eperm = np.random.permutation(len(self.test_image))
-            test_feed = {self.x: self.test_image[eperm[:10]], self.y_: self.test_depth[eperm[:10]]}
+            test_feed = {self.x: self.test_image[eperm[:10]], self.y_: self.test_depth[eperm[:10]], self.test: 1}
 
             for i in tqdm(range(len(self.train_image)//batch_size)):
-                if epoch < 300:
+                if epoch < 100:
                     perm = [x for x in range(len(self.train_image))]
                 else:
                     perm = np.random.permutation(len(self.train_image))
@@ -203,32 +211,29 @@ class dganet(object):
                 
                 train_image = self.train_image[perm[batch:batch+batch_size]]
                 train_depth = self.train_depth[perm[batch:batch+batch_size]]
-                train_feed = {self.x: train_image, self.y_: train_depth}
-                
-                _, dl, s_w = self.sess.run([d_train_op, self.d_loss, self.sum_wasser_distance], feed_dict = train_feed)
-                self.sess.run(self.clip_updates)
+                train_feed = {self.x: train_image, self.y_: train_depth, self.test: 0}
+               
+                for i in range(self.critic_k):
+                    _, dl = self.sess.run([d_train_op, self.d_loss], feed_dict = train_feed)
+                    self.sess.run(self.clip_updates)
+                _, l, gl  = self.sess.run([g_train_op, self.loss, self.g_loss], feed_dict = train_feed)
 
-                _, l, s_l, gl, s_gl  = self.sess.run([g_train_op, self.loss, self.sum_loss, self.g_loss, self.sum_g_loss], feed_dict = train_feed)
-
-                train_loss.append(l/batch_size)
+                train_loss.append(l)
                 g_train_loss.append(gl)
                 d_train_loss.append(dl)
 
-            if epoch % 10 == 0:
+            if epoch % 1 == 0:
                 # output results
 
-                test_summary, vl, test_img = self.sess.run([self.merged, self.loss, self.sum_img], feed_dict = test_feed)
-                train_summary, cl, train_img = self.sess.run([self.merged, self.loss, self.sum_img], feed_dict = train_feed)
+                test_summary, vl = self.sess.run([self.merged, self.loss], feed_dict = test_feed)
+                train_summary, cl = self.sess.run([self.merged, self.loss], feed_dict = train_feed)
                 g_train_summary, gl = self.sess.run([self.merged, self.g_loss], feed_dict = train_feed)
                 d_train_summary, dl = self.sess.run([self.merged, self.d_loss], feed_dict = train_feed)
-
-                self.train_writer.add_summary(train_img, epoch)
-                self.test_writer.add_summary(test_img, epoch)
 
                 self.train_writer.add_summary(train_summary, epoch)
                 self.test_writer.add_summary(test_summary, epoch)
 
-                print("loss at epoch %s: %.10f" % (epoch, vl/self.batch_size))
+                print("loss at epoch %s: %.10f" % (epoch, vl))
                 print("avg_loss : %.10f" % np.array(train_loss).mean())
                 print("g_loss : %.10f" % np.array(g_train_loss).mean())
                 print("d_loss : %.10f" % np.array(d_train_loss).mean())
@@ -249,12 +254,15 @@ class dganet(object):
                 
             if epoch % 100 == 2:
                 self.save_model(epoch)
-
-    def eq_hist(self, image):
-        img_yuv = cv2.cvtColor(image, cv2.COLOR_BGR2YUV)
-        img_yuv[:,:,0] = cv2.equalizeHist(img_yuv[:,:,0])
-        img_out = cv2.cvtColor(img_yuv, cv2.COLOR_YUV2BGR)
-        return img_out
+    
+    #gradient penalty https://arxiv.org/pdf/1704.00028
+    def gradient_penalty(self):
+        eps = tf.random_uniform([self.batch_size, 1, 1, 1], minval=0., maxval=1.)
+        y_hat = eps * self.y_out + (1. - eps) * self.dist_y_tar
+        d_y_hat = self.discriminator(self.dist_x, y_hat, reuse=True)
+        ddy = tf.gradients(d_y_hat, [y_hat])[0]
+        ddy = tf.sqrt(tf.reduce_sum(tf.square(ddy), [1, 2, 3]))
+        return tf.reduce_mean(tf.square(ddy - 1.))
 
     def get_nyu_dataset(self):
         f = h5py.File(self.dataset_path)
@@ -264,8 +272,8 @@ class dganet(object):
         for (image, depth) in tqdm(data_list):
             img = image.transpose(2, 1, 0)
             dep = depth.transpose(1, 0)
-            img = cv2.resize(img, (self.image_h, self.image_w), interpolation = cv2.INTER_AREA)
-            dep = cv2.resize(dep, (self.image_h, self.image_w), interpolation = cv2.INTER_AREA)
+            img = cv2.resize(img, (self.read_image_h, self.read_image_w), interpolation = cv2.INTER_AREA)
+            dep = cv2.resize(dep, (self.read_image_h, self.read_image_w), interpolation = cv2.INTER_AREA)
             img = img.flatten().astype(np.float32)
             dep = dep.flatten().astype(np.float32)
             img_list.append(img/np.amax(img))
@@ -281,22 +289,30 @@ class dganet(object):
         self.train_image = np.asarray(self.train_image)
         self.train_depth = np.asarray(self.train_depth)
 
-    def generate_image_batch(self, images, targets):
+    #data augmentation
+    def generate_image_batch(self, images, targets, test_flag):
         img_list = [tf.squeeze(img, [0]) for img in tf.split(images, self.batch_size, 0)]
         tar_list = [tf.squeeze(tar, [0]) for tar in tf.split(targets, self.batch_size, 0)]
         images_ = []
         targets_ = []
-        for img, tar in zip(img_list, tar_list):
-            img_tar_set = tf.concat([img, tar], 2)
-            img_tar_set = tf.image.random_flip_left_right(img_tar_set)
-            img, tar = tf.split(img_tar_set, [3, 1], 2)
-            img = tf.image.random_brightness(img, max_delta=63/255.)
-            img = tf.image.random_contrast(img, lower=0.5, upper=1.5)
-            img = tf.expand_dims(img, 0)
-            tar = tf.expand_dims(tar, 0)
-            images_.append(img)
-            targets_.append(tar)
-        return tf.concat(images_, 0), tf.concat(targets_, 0)
+        if test_flag == 0:
+            for img, tar in zip(img_list, tar_list):
+                img_tar_set = tf.concat([img, tar], 2)
+                img_tar_set = tf.random_crop(img_tar_set, [self.image_h, self.image_w, 4])
+                img_tar_set = tf.image.random_flip_left_right(img_tar_set)
+                img, tar = tf.split(img_tar_set, [3, 1], 2)
+                img = tf.image.random_brightness(img, max_delta=63/255.)
+                img = tf.image.random_contrast(img, lower=0.5, upper=1.5)
+                #img = tf.image.per_image_standardization(img)
+
+                img = tf.expand_dims(img, 0)
+                tar = tf.expand_dims(tar, 0)
+                images_.append(img)
+                targets_.append(tar)
+            return tf.concat(images_, 0), tf.concat(targets_, 0)
+        else:
+            return (tf.image.resize_images(images, [self.image_h, self.image_w]),
+                    tf.image.resize_images(targets, [self.image_h, self.image_w]))
 
 
         
