@@ -12,7 +12,7 @@ from utils import *
 
 class dganet(object):
     def __init__(self, sess, image_h=128, image_w=128, batch_size=10,
-            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, l1_reg_scale=3e-3, l2_reg_scale=1e-4, gp_scale=10.,
+            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, l1_reg_scale=3e-3, l2_reg_scale=3e-3, gp_scale=10.,
             g_dim=64, d_dim=64, K=0.5, critic_k=1, c=0.01, keep_prob=0.5, noise_std=0,
             dataset_path=None, checkpoint_dir=None, outdata_dir=None, summary_dir=None):
 
