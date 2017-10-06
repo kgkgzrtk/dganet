@@ -12,8 +12,8 @@ from utils import *
 
 class dganet(object):
     def __init__(self, sess, image_h=128, image_w=128, batch_size=10,
-            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, l1_reg_scale=3e-3, l2_reg_scale=3e-3, gp_scale=10.,
-            g_dim=64, d_dim=64, K=0.5, critic_k=1, c=0.01, keep_prob=0.5, noise_std=0,
+            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, l1_reg_scale=1e-6, l2_reg_scale=1e-6, gp_scale=20.,
+            g_dim=64, d_dim=64, K=0.5, critic_k=2, c=0.01, keep_prob=0.5, noise_std=1e-6,
             dataset_path=None, checkpoint_dir=None, outdata_dir=None, summary_dir=None):
 
         self.sess = sess
@@ -83,8 +83,8 @@ class dganet(object):
 
         self.weight_penalty = self.L1_weight_penalty + self.L2_weight_penalty
         
-        gp = self.gradient_penalty() * self.gp_scale
-        self.clip_updates = [w.assign(tf.clip_by_value(w, -self.c, self.c)) for w in self.d_vars]
+        self.gp = self.gradient_penalty() * self.gp_scale
+        self.clip_updates = [w.assign(tf.clip_by_value(w, -self.c, self.c)) for w in self.d_vars if 'w' in w.name]
         
         #L2_norm
         loss_ = tf.reduce_sum(tf.square(self.dist_y_tar - self.y_out)/2., [1, 2, 3])
@@ -92,30 +92,40 @@ class dganet(object):
         
         #L2_loss + (L2_loss/GAN_loss)*GAN_LOSS + L1_reg
         gan_loss_ = tf.reduce_sum(-self.d_y_fake, [1, 2, 3])
-        gan_loss = -tf.reduce_mean(gan_loss_)
-        self.g_loss = tf.reduce_mean(loss_ + self.K * tf.abs(self.loss/gan_loss) * gan_loss_) + self.weight_penalty
+        self.gan_loss = -tf.reduce_mean(gan_loss_)
+        self.g_loss = tf.reduce_mean(loss_ + self.K * tf.abs(self.loss/self.gan_loss) * gan_loss_) + self.weight_penalty
         #Critic loss + gp
-        self.d_loss = tf.reduce_mean(tf.reduce_sum(self.d_y_fake - self.d_y_real, [1, 2, 3])) + gp
+        self.w_distance = tf.reduce_mean(tf.reduce_sum(self.d_y_real - self.d_y_fake, [1, 2, 3]))
+        self.d_loss = -self.w_distance+ self.gp
+       
         
-        tf.summary.scalar('l2_loss', self.loss)
-        tf.summary.scalar('g_loss', self.g_loss)
-        tf.summary.scalar('d_loss', self.d_loss)
-        tf.summary.scalar('gan_loss', gan_loss)
-        tf.summary.scalar('wassaer_distance', tf.reduce_mean(tf.reduce_sum(self.d_y_real - self.d_y_fake, [1, 2, 3])))
-        tf.summary.scalar('g_reg', self.weight_penalty)
-        tf.summary.scalar('gradient_penalty', gp)
+        self.scalar_summary_list = {
+            'L2_loss':              self.loss,       
+            'generator_loss':       self.g_loss,
+            'discriminator_loss':   self.d_loss,
+            'GAN_loss':             self.gan_loss,
+            'generator_reg':        self.weight_penalty,
+            'wasser_distance':      self.w_distance,
+            'gradient_penalty':     self.gp    
+        }
         
-        tf.summary.image('y_out', tf.reshape(self.y_out, [-1, self.y_out.get_shape().dims[1].value, self.y_out.get_shape().dims[2].value, 1]), 10)
+        for k, v in self.scalar_summary_list.items():
+            tf.summary.scalar(k, v, collections=['train', 'test'])
+
+        tf.summary.image('output_depth_image', self.y_out, self.batch_size, collections=['train', 'test'])
+        
+        [tf.summary.histogram(var.name, var, collections=['train']) for var in t_vars]
 
         self.images = gen_image(self.y)
         self.in_image = gen_image(dict(zip(range(0,9), [self.x_in])))
         self.tar_image = gen_image(dict(zip(range(0,9), [self.y_tar])))
-        
         self.dd_ =  disp_image(self.y_out)
+
+        self.train_merged = tf.summary.merge_all(key='train')
+        self.test_merged = tf.summary.merge_all(key='test')
         self.merged = tf.summary.merge_all()
         self.saver = tf.train.Saver()
-
-
+    
     def discriminator(self, image, depth, reuse=False):
         with tf.variable_scope('disc') as scope:
             if reuse:
@@ -167,7 +177,7 @@ class dganet(object):
             y_dc4 = resize_conv(lrelu(y_in4), [self.batch_size, self.w_range[2], self.w_range[2], dim * 2 * 2], name='dc4')
 
             y_in5 = tf.concat([y_dc4, y_c1],3)
-            y_dc5 = deconv(lrelu(y_in5), [self.batch_size, self.w_range[1], self.w_range[1], dim * 1 * 2], name='dc5')
+            y_dc5 = resize_conv(lrelu(y_in5), [self.batch_size, self.w_range[1], self.w_range[1], dim * 1 * 2], name='dc5')
 
             y_in6 = tf.concat([y_dc5, y_c0],3)
             y_dc6 = tf.sigmoid(resize_conv(lrelu(y_in6), [self.batch_size, self.w_range[0], self.w_range[0], self.output_ch], name='dc6'))
@@ -175,23 +185,17 @@ class dganet(object):
             y = [input_, y_c1 ,y_c2, y_c4, y_in2, y_in4, y_in5, y_dc6]
             
             return dict(zip(self.image_keys, y))
-
-
+    
+    
     def train(self, train_epoch):
 
         self.get_nyu_dataset()
-
         g_train_op = tf.train.AdamOptimizer(self.g_lr, beta1=0., beta2=0.9).minimize(self.g_loss, var_list=self.g_vars)
         d_train_op = tf.train.AdamOptimizer(self.d_lr, beta1=0., beta2=0.9).minimize(self.d_loss, var_list=self.d_vars)
 
         tf.global_variables_initializer().run()
         #self.load_model("dganet_e00502.model")
-
         batch_size = self.batch_size
-        step = 0
-        train_loss = []
-        g_train_loss = []
-        d_train_loss = []
         
         # save input & target image
         in_img = self.sess.run(self.in_image[0], {self.x: self.test_image[:batch_size]})
@@ -205,9 +209,6 @@ class dganet(object):
         
         for epoch in range(train_epoch):
             
-            eperm = np.random.permutation(len(self.test_image))
-            test_feed = {self.x: self.test_image[eperm[:10]], self.y_: self.test_depth[eperm[:10]], self.test: 1}
-
             for i in tqdm(range(len(self.train_image)//batch_size)):
                 if epoch < 100:
                     perm = [x for x in range(len(self.train_image))]
@@ -221,33 +222,23 @@ class dganet(object):
                 train_feed = {self.x: train_image, self.y_: train_depth, self.test: 0}
                
                 for i in range(self.critic_k):
-                    _, dl = self.sess.run([d_train_op, self.d_loss], feed_dict = train_feed)
+                    self.sess.run(d_train_op, feed_dict = train_feed)
                     self.sess.run(self.clip_updates)
-                _, l, gl  = self.sess.run([g_train_op, self.loss, self.g_loss], feed_dict = train_feed)
-
-                train_loss.append(l)
-                g_train_loss.append(gl)
-                d_train_loss.append(dl)
+                self.sess.run(g_train_op, feed_dict = train_feed)
 
             if epoch % 1 == 0:
                 # output results
-
-                test_summary, vl = self.sess.run([self.merged, self.loss], feed_dict = test_feed)
-                train_summary, cl = self.sess.run([self.merged, self.loss], feed_dict = train_feed)
-                g_train_summary, gl = self.sess.run([self.merged, self.g_loss], feed_dict = train_feed)
-                d_train_summary, dl = self.sess.run([self.merged, self.d_loss], feed_dict = train_feed)
-
-                self.train_writer.add_summary(train_summary, epoch)
+                t_perm = np.random.permutation(len(self.test_image))
+                test_feed = {self.x: self.test_image[t_perm[:10]], self.y_: self.test_depth[t_perm[:10]], self.test: 1}
+                test_summary, vl = self.sess.run([self.test_merged, self.loss], feed_dict = test_feed)
                 self.test_writer.add_summary(test_summary, epoch)
+                
+                train_summary, l = self.sess.run([self.train_merged, self.loss], feed_dict = train_feed)
+                self.train_writer.add_summary(train_summary, epoch)
 
-                print("loss at epoch %s: %.10f" % (epoch, vl))
-                print("avg_loss : %.10f" % np.array(train_loss).mean())
-                print("g_loss : %.10f" % np.array(g_train_loss).mean())
-                print("d_loss : %.10f" % np.array(d_train_loss).mean())
-                train_loss = []
-                g_train_loss = []
-                d_train_loss = []
-
+                print("[ Epoch : %s ]"% epoch)
+                print("val_loss : %.10f"% vl)
+                print("train_loss : %.10f"% l)
                 print("")
                 
                 # save image
