@@ -1,6 +1,6 @@
 # dganet
 
-##python modules
+## python modules
 
  - tensorflow 1.1.0
  - numpy
