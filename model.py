@@ -12,7 +12,7 @@ from utils import *
 
 class dganet(object):
     def __init__(self, sess, image_h=128, image_w=128, batch_size=10,
-            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, beta1=0.5, beta2=0.999, reg_scale=1e-5, alpha=0.5, gp_scale=10.,
+            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, beta1=0.5, beta2=0.999, reg_scale=1e-3, alpha=0.5, gp_scale=10.,
             g_dim=64, d_dim=64, K=50, critic_k=1, keep_prob=0.5, noise_std=0.,
             dataset_path=None, checkpoint_dir=None, outdata_dir=None, summary_dir=None):
 
@@ -39,6 +39,7 @@ class dganet(object):
         self.noise_std = noise_std
         self.seed = 123
         
+        self.r_s = lambda x: (x+1.)/2.
         self.test_writer = tf.summary.FileWriter(summary_dir+'/test', sess.graph)
         self.train_writer = tf.summary.FileWriter(summary_dir+'/train', sess.graph)
         self.checkpoint_dir = checkpoint_dir
@@ -86,12 +87,13 @@ class dganet(object):
         loss_ = tf.reduce_sum(tf.abs(self.dist_y_tar - self.y_out), [1, 2, 3])
         self.loss = tf.reduce_mean(loss_)
         
-        RMS_loss_ = tf.reduce_sum(tf.square((self.dist_y_tar - self.y_out)/2.))
-        self.RMS_loss = tf.sqrt(tf.reduce_mean(RMS_loss_))
+        d_gt, d_out = (self.r_s(self.dist_y_tar), self.r_s(self.y_out))
+        self.REL_loss = tf.reduce_mean(tf.reduce_sum(tf.abs(d_gt - d_out)/d_gt, [1, 2, 3]))/self.image_size
+        self.RMS_loss = tf.reduce_mean(tf.sqrt(tf.reduce_sum(tf.square(d_gt - d_out),[1, 2, 3])/self.batch_size))
+        self.Log10_loss = tf.reduce_mean(tf.reduce_sum(tf.abs(log10(d_gt)-log10(d_out)),[1, 2, 3]))/self.image_size
         
         #L2_loss + (L2_loss/GAN_loss)*GAN_LOSS + L1_reg
         self.gan_loss = tf.reduce_mean(-self.d_y_fake)
-        #self.g_loss = tf.reduce_mean(loss_ + self.K * tf.abs(self.loss/self.gan_loss) * self.d_y_fake) + self.reg_scale * self.weight_penalty
         self.g_loss = self.loss + self.K*self.gan_loss + self.reg_scale * self.weight_penalty
 
         #Critic loss + gp
@@ -102,6 +104,8 @@ class dganet(object):
         self.scalar_summary_list = {
             'L1_loss':              self.loss,
             'RMS_loss':             self.RMS_loss,
+            'REL_loss':             self.REL_loss,
+            'Log10_loss':           self.Log10_loss,
             'generator_loss':       self.g_loss,
             'discriminator_loss':   self.d_loss,
             'GAN_loss':             self.gan_loss,
@@ -276,7 +280,7 @@ class dganet(object):
             img = cv2.resize(img, (self.image_h, self.image_w), interpolation = cv2.INTER_AREA)
             dep = cv2.resize(dep, (self.image_h, self.image_w), interpolation = cv2.INTER_AREA)
             img = img.flatten().astype(np.float32)/255.
-            dep = (dep.flatten().astype(np.float32)/np.amax(dep) - 0.5)*2.
+            dep = dep.flatten().astype(np.float32)/10.*2.-1.
             img_list.append(img)
             dep_list.append(dep)
 
@@ -295,7 +299,7 @@ class dganet(object):
         img_tar_set = tf.concat([img, tar], 2)
         img_tar_set = tf.image.random_flip_left_right(img_tar_set)
         img, tar = tf.split(img_tar_set, [3, 1], 2)
-        img = tf.image.random_brightness(img, max_delta=63/255.)
+        img = tf.image.random_brightness(img, max_delta=80/255.)
         img = tf.image.random_contrast(img, lower=0.5, upper=1.5)
         return img, tar
 

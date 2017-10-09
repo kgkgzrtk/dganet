@@ -3,33 +3,10 @@
 import numpy as np
 import tensorflow as tf
 
-def mse_loss(y, y_):
-    loss = tf.reduce_mean(tf.squared_difference(y, y_))
-    return loss
-
-def l2_loss(y, y_):
-    loss = tf.nn.l2_loss(y - y_)
-    return loss
-
-def d_loss_real(h):
-    d_entropy = tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(logits=h, labels=tf.ones_like(h)) )
-    #d_entropy = tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(h, tf.zeros_like(h)*0.9) )
-    return d_entropy
-
-def d_loss_fake(h):
-    d_entropy = tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(logits=h, labels=tf.zeros_like(h)) )
-    return d_entropy
-
-def g_loss(h):
-    g_entropy = tf.reduce_mean( tf.nn.sigmoid_cross_entropy_with_logits(logits=h, labels=tf.ones_like(h)) )
-    return g_entropy
-
-def g_loss_(h):
-    return tf.reduce_mean( -tf.log(h) )
-
-def disc_acc(h, h_):
-    accuracy = tf.reduce_mean(tf.concat(0,[(1. - h_), h]))
-    return accuracy
+def log10(x):
+    numerator = tf.log(x)
+    denominator = tf.log(10.)
+    return numerator / denominator
 
 def gray_to_rgb(image): # grayscale image -> color map "JET"
     area = [0.0, 0.125, 0.375, 0.625, 0.875, 1.0]
@@ -43,7 +20,7 @@ def gray_to_rgb(image): # grayscale image -> color map "JET"
     col_b = rad(0)          + 1. * img_[1]    + rad_(2)         + 0. * img_[3]  + 0. * img_[4]
     col_g = 0. * img_[0]    + rad(1)          + 1. * img_[2]    + rad_(3)       + 0. * img_[4]
     col_r = 0. * img_[0]    + 0. * img_[1]    + rad(2)          + 1. * img_[3]  + rad_(4)
-    return tf.concat([col_b, col_g, col_r], 3)
+    return tf.concat([col_r, col_g, col_b], 3)
 
 def gen_image(result):
     BAT_SIZE = 10
