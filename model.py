@@ -226,16 +226,20 @@ class dganet(object):
                 
                 train_image = self.train_image[perm[batch:batch+batch_size]]
                 train_depth = self.train_depth[perm[batch:batch+batch_size]]
+                
                 train_feed = {self.x: train_image, self.y_: train_depth, self.training: True}
-               
                 for i in range(self.critic_k):
                     self.sess.run(d_train_op, feed_dict = train_feed)
-                _, generated_depth = self.sess.run([g_train_op, self.y_out], feed_dict = train_feed)
+                self.sess.run(g_train_op, feed_dict = train_feed)
 
-                if epoch > 150:
-                    train_feed = {self.x: train_image, self.y_: generated_depth, self.training: True}
+                if epoch > 5:
+                    gen_feed = {self.x: train_image, self.y_: train_depth, self.training: False}
+                    generated_depth = self.sess.run(self.y_out, feed_dict = gen_feed)
+                    gen_dep = np.reshape(generated_depth, [batch_size, -1])
+                    train_feed = {self.x: train_image, self.y_: gen_dep, self.training: True}
                     self.sess.run(d_train_op, feed_dict = train_feed)
                     self.sess.run(g_train_op, feed_dict = train_feed)
+
 
             if epoch % 1 == 0:
                 # output results
