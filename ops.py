@@ -26,7 +26,7 @@ def conv(image, out_dim, name, c=4, k=1, stddev=0.01, bn=True, padding='SAME'):
         W = tf.get_variable('w', [c, c, image.get_shape().dims[-1].value, out_dim], initializer=tf.truncated_normal_initializer(stddev=stddev))
         b = tf.get_variable('b', [out_dim], initializer=tf.constant_initializer(0.0))
         y = tf.nn.conv2d(image, W, strides=[1, k, k, 1], padding=padding) + b
-        if bn: return batch_norm(y)
+        if bn: return tf.contrib.layers.batch_norm(y, scale=True, fused=True, scope='bn')
         else: return y
 
 def pool(x, k=2, name='pooling'):
