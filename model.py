@@ -20,6 +20,7 @@ class dganet(object):
         self.batch_size = batch_size
         self.image_h = image_h
         self.image_w = image_w
+        self.read_image_h, self.read_image_w = (170, 170)
         self.image_size = self.image_h * self.image_w
         self.input_ch = input_ch
         self.output_ch = output_ch
@@ -40,7 +41,7 @@ class dganet(object):
         self.noise_std = noise_std
         self.seed = 123
         
-        self.r_s = lambda x: (x+1.)/2.*10.
+        self.r_s = lambda x: (10.**((x+1.)/2.)-1.)/0.9  #[-1, 1] => [0, 10]
         self.test_writer = tf.summary.FileWriter(summary_dir+'/test', sess.graph)
         self.train_writer = tf.summary.FileWriter(summary_dir+'/train', sess.graph)
         self.checkpoint_dir = checkpoint_dir
@@ -54,12 +55,12 @@ class dganet(object):
         self.image_keys = ['y_x', 'y_dc1', 'y_dc2', 'y_dc3', 'y_dc4', 'y_dc5', 'y_dc6']
         self.w_range = [128, 64, 32, 16, 8, 4, 2, 1]
 
-        self.x = tf.placeholder(tf.float32, [None, self.image_size * 3], name="x")
-        self.y_ = tf.placeholder(tf.float32, [None, self.image_size], name="y_")
+        self.x = tf.placeholder(tf.float32, [None, self.read_image_h * self.read_image_w * 3], name="x")
+        self.y_ = tf.placeholder(tf.float32, [None, self.read_image_h * self.read_image_w], name="y_")
         self.training = tf.placeholder(tf.bool)
 
-        self.x_in = tf.reshape(self.x, [self.batch_size, self.image_h, self.image_w, 3])
-        self.y_tar = tf.reshape(self.y_, [self.batch_size, self.image_h, self.image_w, 1])
+        self.x_in = tf.reshape(self.x, [self.batch_size, self.read_image_h, self.read_image_w, 3])
+        self.y_tar = tf.reshape(self.y_, [self.batch_size, self.read_image_h, self.read_image_w, 1])
         
         self.dist_x, self.dist_y_tar = self.generate_image_batch(self.x_in, self.y_tar)
 
@@ -169,7 +170,7 @@ class dganet(object):
         with tf.variable_scope('gen') as scope:
             keep_prob = self.keep_prob
             dim = self.g_dim
-            input_ = tf.reshape(input_, [self.batch_size, self.image_h, self.image_w, 3])
+            input_ = tf.reshape(input_, [-1, self.image_h, self.image_w, 3])
             #convolutional layers
 
             y_c0 = conv(input_, dim, c=4, k=2, name='c0', bn=False)
@@ -301,8 +302,8 @@ class dganet(object):
         for (image, depth) in tqdm(data_list):
             img = image.transpose(2, 1, 0)
             dep = depth.transpose(1, 0)
-            img = cv2.resize(img, (self.image_h, self.image_w), interpolation = cv2.INTER_AREA)
-            dep = cv2.resize(dep, (self.image_h, self.image_w), interpolation = cv2.INTER_AREA)
+            img = cv2.resize(img, (self.read_image_h, self.read_image_w), interpolation = cv2.INTER_AREA)
+            dep = cv2.resize(dep, (self.read_image_h, self.read_image_w), interpolation = cv2.INTER_AREA)
             img = img.flatten().astype(np.float32)
             dep = dep.flatten().astype(np.float32)
             img_list.append(img)
@@ -321,9 +322,12 @@ class dganet(object):
     def data_augment(self, img, tar):
         img_tar_set = tf.concat([img, tar], 2)
         img_tar_set = tf.image.random_flip_left_right(img_tar_set)
+        rnd_theta = np.random.uniform(-5.*(np.pi/180.), 5.*(np.pi/180.))
+        img_tar_set = tf.contrib.image.rotate(img_tar_set, rnd_theta)
+        crop_size = int(self.read_image_h * ((np.cos(rnd_theta)/(np.sin(rnd_theta)+np.cos(rnd_theta)))**2))
+        img_tar_set = tf.image.resize_image_with_crop_or_pad(img_tar_set, crop_size, crop_size)
+        img_tar_set = tf.random_crop(img_tar_set, [self.image_h, self.image_w, 4])
         img, tar = tf.split(img_tar_set, [3, 1], 2)
-        #img = tf.image.random_brightness(img, max_delta=30)
-        #img = tf.image.random_contrast(img, lower=0.7, upper=1.5)
         return img, tar
 
     def generate_image_batch(self, images, targets):
@@ -333,8 +337,15 @@ class dganet(object):
         images_ = []
         targets_ = []
         for img, tar in zip(img_list, tar_list):
-            img, tar = tf.cond(self.training, lambda: self.data_augment(img, tar), lambda: (img, tar))
-            img /= 255.; tar = tar/10.*2.-1.
+            img, tar = tf.cond(self.training,
+                    lambda: self.data_augment(img, tar),
+                    lambda: (tf.image.resize_images(img, [self.image_h, self.image_w]),
+                             tf.image.resize_images(tar, [self.image_h, self.image_w]))
+                    )
+
+            img /= 255.                     #img: [0, 255] -> [0, 1]  
+            tar = log10(tar*0.9+1.)*2.-1.   #tar: [0, 10] --Log10--> [-1, 1] 
+
             img = tf.expand_dims(img, 0)
             tar = tf.expand_dims(tar, 0)
             images_.append(img)
