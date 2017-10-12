@@ -12,7 +12,7 @@ from utils import *
 
 class dganet(object):
     def __init__(self, sess, image_h=128, image_w=128, batch_size=10,
-            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, beta1=0.5, beta2=0.999, reg_scale=1e-4, alpha=0.5, gp_scale=10., h_scale=1e+2,
+            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, beta1=0.5, beta2=0.999, reg_scale=0., alpha=0.5, gp_scale=10., h_scale=1e+3,
             g_dim=64, d_dim=64, K=10., critic_k=1, keep_prob=0.5, noise_std=0.,
             dataset_path=None, checkpoint_dir=None, outdata_dir=None, summary_dir=None):
 
@@ -84,7 +84,8 @@ class dganet(object):
         #L2_Regularization 
         self.L2_weight_penalty = tf.add_n([tf.nn.l2_loss(w) for w in self.g_vars if 'w' in w.name])
         
-        self.weight_penalty = self.alpha * self.L1_weight_penalty + (1. - self.alpha) * self.L2_weight_penalty
+        merged_weight_penalty = self.alpha * self.L1_weight_penalty + (1. - self.alpha) * self.L2_weight_penalty
+        self.weight_penalty = self.reg_scale * merged_weight_penalty
         
         #L1 loss
         loss_ = tf.reduce_sum(tf.abs(self.dist_y_tar - self.y_out), [1, 2, 3])
@@ -96,7 +97,7 @@ class dganet(object):
         
         #Generator Loss
         self.gan_loss = tf.reduce_mean(-self.d_y_fake) + d_hidden_loss
-        self.g_loss = self.loss + self.K * self.gan_loss + self.reg_scale * self.weight_penalty
+        self.g_loss = self.loss + self.K * self.gan_loss + self.weight_penalty
 
         #Discriminator loss + gp
         self.gp = self.gradient_penalty() * self.gp_scale
@@ -126,8 +127,10 @@ class dganet(object):
             tf.summary.scalar(k, v, collections=['train', 'test'])
         
         rgb_img = tf.image.hsv_to_rgb(self.dist_x)
-        merged_img = tf.concat([rgb_img, self.dist_x, gray_to_rgb(tf.concat([self.y_out, self.dist_y_tar], 2))], 2)
-        tf.summary.image('result-images', merged_img, self.batch_size, collections=['train', 'test'])
+        hsv_img = tf.image.grayscale_to_rgb(tf.concat(tf.split(self.dist_x,3,3),2))
+        result_img = tf.concat([rgb_img, gray_to_rgb(tf.concat([self.y_out, self.dist_y_tar], 2))], 2)
+        merged_img = tf.concat([hsv_img, result_img], 1)
+        tf.summary.image('result-images', tf.cast(merged_img*255., tf.uint8), self.batch_size, collections=['train', 'test'])
         
         [tf.summary.histogram(var.name, var, collections=['train']) for var in t_vars if (('w' in var.name) or ('bn' in var.name))]
 
@@ -319,8 +322,8 @@ class dganet(object):
         img_tar_set = tf.concat([img, tar], 2)
         img_tar_set = tf.image.random_flip_left_right(img_tar_set)
         img, tar = tf.split(img_tar_set, [3, 1], 2)
-        img = tf.image.random_brightness(img, max_delta=30)
-        img = tf.image.random_contrast(img, lower=0.7, upper=1.5)
+        #img = tf.image.random_brightness(img, max_delta=30)
+        #img = tf.image.random_contrast(img, lower=0.7, upper=1.5)
         return img, tar
 
     def generate_image_batch(self, images, targets):
