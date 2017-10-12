@@ -12,8 +12,8 @@ from utils import *
 
 class dganet(object):
     def __init__(self, sess, image_h=128, image_w=128, batch_size=10,
-            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, beta1=0.5, beta2=0.999, reg_scale=1e-4, alpha=0.5, gp_scale=10.,
-            g_dim=32, d_dim=32, K=10., critic_k=1, keep_prob=0.5, noise_std=0.,
+            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, beta1=0.5, beta2=0.999, reg_scale=1e-4, alpha=0.5, gp_scale=10., h_scale=1e+2,
+            g_dim=64, d_dim=64, K=10., critic_k=1, keep_prob=0.5, noise_std=0.,
             dataset_path=None, checkpoint_dir=None, outdata_dir=None, summary_dir=None):
 
         self.sess = sess
@@ -33,6 +33,7 @@ class dganet(object):
         self.K = K
         self.critic_k = critic_k
         self.reg_scale = reg_scale
+        self.h_scale = h_scale
         self.alpha = alpha
         self.gp_scale = gp_scale
         self.keep_prob = keep_prob
@@ -65,9 +66,13 @@ class dganet(object):
         self.y = self.inference(self.dist_x)
         self.y_out = self.y['y_dc6']
 
-        self.d_y_real = self.discriminator(self.dist_x, self.dist_y_tar)
-        self.d_y_fake = self.discriminator(self.dist_x, self.y_out, reuse=True)
+        d_real = self.discriminator(self.dist_x, self.dist_y_tar)
+        d_fake = self.discriminator(self.dist_x, self.y_out, reuse=True)
 
+        self.d_y_real = d_real[-1]
+        self.d_y_fake = d_fake[-1]
+        self.d_h_real = d_real[:-1]
+        self.d_h_fake = d_fake[:-1]
 
         t_vars = tf.trainable_variables()
         self.d_vars = [v for v in t_vars if 'disc' in v.name]
@@ -78,27 +83,30 @@ class dganet(object):
         
         #L2_Regularization 
         self.L2_weight_penalty = tf.add_n([tf.nn.l2_loss(w) for w in self.g_vars if 'w' in w.name])
-
-        self.weight_penalty = self.alpha * self.L1_weight_penalty + (1. - self.alpha) * self.L2_weight_penalty
         
-        self.gp = self.gradient_penalty() * self.gp_scale
+        self.weight_penalty = self.alpha * self.L1_weight_penalty + (1. - self.alpha) * self.L2_weight_penalty
         
         #L1 loss
         loss_ = tf.reduce_sum(tf.abs(self.dist_y_tar - self.y_out), [1, 2, 3])
         self.loss = tf.reduce_mean(loss_)
+
+        #Discriminator hidden layer loss
+        d_h_loss_list = [tf.reduce_mean(tf.abs(self.d_h_real[i] - self.d_h_fake[i])) for i in range(len(self.d_h_real))]
+        d_hidden_loss = tf.reduce_mean(d_h_loss_list) * self.h_scale
         
+        #Generator Loss
+        self.gan_loss = tf.reduce_mean(-self.d_y_fake) + d_hidden_loss
+        self.g_loss = self.loss + self.K * self.gan_loss + self.reg_scale * self.weight_penalty
+
+        #Discriminator loss + gp
+        self.gp = self.gradient_penalty() * self.gp_scale
+        self.w_distance = tf.reduce_mean(self.d_y_real) - tf.reduce_mean(self.d_y_fake)
+        self.d_loss = -self.w_distance + self.gp - d_hidden_loss
+       
         d_gt, d_out = (self.r_s(self.dist_y_tar), self.r_s(self.y_out))
         self.RMS_loss = tf.reduce_mean(tf.sqrt(tf.reduce_sum(tf.square(d_gt - d_out), [1, 2, 3])/self.image_size))
         self.REL_loss = tf.reduce_mean(tf.reduce_sum(tf.abs(d_gt - d_out)/d_gt, [1, 2, 3]))/self.image_size
         self.Log10_loss = tf.reduce_mean(tf.reduce_sum(tf.abs(log10(d_gt)-log10(d_out)), [1, 2, 3]))/self.image_size
-        
-        self.gan_loss = tf.reduce_mean(-self.d_y_fake)
-        self.g_loss = self.loss + self.K * self.gan_loss + self.reg_scale * self.weight_penalty
-
-        #Critic loss + gp
-        self.w_distance = tf.reduce_mean(self.d_y_real) - tf.reduce_mean(self.d_y_fake)
-        self.d_loss = -self.w_distance + self.gp
-       
         
         self.scalar_summary_list = {
             'L1_loss':              self.loss,
@@ -108,6 +116,7 @@ class dganet(object):
             'generator_loss':       self.g_loss,
             'discriminator_loss':   self.d_loss,
             'GAN_loss':             self.gan_loss,
+            'd_hidden_loss':        d_hidden_loss,
             'generator_reg':        self.weight_penalty,
             'wasser_distance':      self.w_distance,
             'gradient_penalty':     self.gp    
@@ -116,8 +125,8 @@ class dganet(object):
         for k, v in self.scalar_summary_list.items():
             tf.summary.scalar(k, v, collections=['train', 'test'])
         
-        norm_x = (self.dist_x-tf.reduce_min(self.dist_x))/(tf.reduce_max(self.dist_x)-tf.reduce_min(self.dist_x))
-        merged_img = tf.concat([norm_x, gray_to_rgb(tf.concat([self.y_out, self.dist_y_tar], 2))], 2)
+        rgb_img = tf.image.hsv_to_rgb(self.dist_x)
+        merged_img = tf.concat([rgb_img, self.dist_x, gray_to_rgb(tf.concat([self.y_out, self.dist_y_tar], 2))], 2)
         tf.summary.image('result-images', merged_img, self.batch_size, collections=['train', 'test'])
         
         [tf.summary.histogram(var.name, var, collections=['train']) for var in t_vars if (('w' in var.name) or ('bn' in var.name))]
@@ -149,7 +158,9 @@ class dganet(object):
             h4 = lrelu(conv(h3, dim*8, k=1, stddev=stddev, bn=False, name='h4_conv'))
             l_in = tf.reshape(h4, [self.batch_size, -1])
             l0 = linear(l_in, 1)
-            return l0
+
+            d_y = [h0, h1, h2, h3, l0]
+            return d_y
 
     def inference(self, input_):
         with tf.variable_scope('gen') as scope:
@@ -232,15 +243,6 @@ class dganet(object):
                     self.sess.run(d_train_op, feed_dict = train_feed)
                 self.sess.run(g_train_op, feed_dict = train_feed)
 
-                if epoch > 5:
-                    gen_feed = {self.x: train_image, self.y_: train_depth, self.training: False}
-                    generated_depth = self.sess.run(self.y_out, feed_dict = gen_feed)
-                    gen_dep = np.reshape(generated_depth, [batch_size, -1])
-                    train_feed = {self.x: train_image, self.y_: gen_dep, self.training: True}
-                    self.sess.run(d_train_op, feed_dict = train_feed)
-                    self.sess.run(g_train_op, feed_dict = train_feed)
-
-
             if epoch % 1 == 0:
                 # output results
                 losses_list = []
@@ -250,7 +252,7 @@ class dganet(object):
                     test_feed = {self.x: self.test_image[batch:batch+self.batch_size], self.y_: self.test_depth[batch:batch+self.batch_size], self.training: False}
                     losses = self.sess.run([self.loss, self.RMS_loss, self.REL_loss, self.Log10_loss], feed_dict = test_feed)
                     losses_list.append(losses)
-                vl, rms, rel, log10 = (l.mean() for l in losses)
+                vl, rms, rel, log10 = (np.asarray(loss).mean() for loss in list(zip(*losses_list)))
                 test_feed = {self.x: self.test_image[t_perm[:10]], self.y_: self.test_depth[t_perm[:10]], self.training: False}
                 test_summary = self.sess.run(self.test_merged, feed_dict = test_feed)
                 self.test_writer.add_summary(test_summary, epoch)
@@ -283,17 +285,11 @@ class dganet(object):
     def gradient_penalty(self):
         eps = tf.random_uniform([self.batch_size, 1, 1, 1], minval=0., maxval=1.)
         y_hat = eps * self.y_out + (1. - eps) * self.dist_y_tar
-        d_y_hat = self.discriminator(self.dist_x, y_hat, reuse=True)
+        d_y_hat = self.discriminator(self.dist_x, y_hat, reuse=True)[-1]
         ddy = tf.gradients(d_y_hat, [y_hat])[0]
         ddy = tf.sqrt(tf.reduce_sum(tf.square(ddy), [1, 2, 3]))
         return tf.reduce_mean(tf.square(ddy - 1.))
     
-    def data_normalize(self, x):
-        x = np.asarray(x)
-        x = (x - x.mean())/x.std()
-        x = (x-np.amin(x))/(np.amax(x) - np.amin(x))
-        return [m for m in x]
-
     def get_nyu_dataset(self):
         f = h5py.File(self.dataset_path)
         data_list = list(zip(f['images'], f['depths']))
@@ -308,7 +304,6 @@ class dganet(object):
             dep = dep.flatten().astype(np.float32)
             img_list.append(img)
             dep_list.append(dep)
-        #dep_list = self.data_normalize(dep_list)
         data_list = list(zip(img_list, dep_list))
         test_list = [v for i, v in enumerate(data_list) if i%7==0]
         train_list = [v for i, v in enumerate(data_list) if i%7!=0]
@@ -324,8 +319,8 @@ class dganet(object):
         img_tar_set = tf.concat([img, tar], 2)
         img_tar_set = tf.image.random_flip_left_right(img_tar_set)
         img, tar = tf.split(img_tar_set, [3, 1], 2)
-        img = tf.image.random_brightness(img, max_delta=60)
-        img = tf.image.random_contrast(img, lower=0.5, upper=1.8)
+        img = tf.image.random_brightness(img, max_delta=30)
+        img = tf.image.random_contrast(img, lower=0.7, upper=1.5)
         return img, tar
 
     def generate_image_batch(self, images, targets):
@@ -341,7 +336,9 @@ class dganet(object):
             tar = tf.expand_dims(tar, 0)
             images_.append(img)
             targets_.append(tar)
-        return tf.concat(images_, 0), tf.concat(targets_, 0)
+        images_, targets_ = tf.concat(images_, 0), tf.concat(targets_, 0)
+        images_ = tf.image.rgb_to_hsv(images_)
+        return (images_, targets_)
 
     def save_model(self, epoch):
         model_name = "uw-gan_e%05d.model" % epoch
