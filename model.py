@@ -12,7 +12,7 @@ from utils import *
 
 class dganet(object):
     def __init__(self, sess, image_h=128, image_w=128, batch_size=10,
-            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, beta1=0.5, beta2=0.999, reg_scale=0., alpha=0.5, gp_scale=10., h_scale=1e+3,
+            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, beta1=0.5, beta2=0.999, reg_scale=0., alpha=0.5, gp_scale=10., h_scale=5e+2,
             g_dim=64, d_dim=64, K=10., critic_k=1, keep_prob=0.5, noise_std=0.,
             dataset_path=None, checkpoint_dir=None, outdata_dir=None, summary_dir=None):
 
@@ -324,7 +324,8 @@ class dganet(object):
         img_tar_set = tf.image.random_flip_left_right(img_tar_set)
         rnd_theta = np.random.uniform(-5.*(np.pi/180.), 5.*(np.pi/180.))
         img_tar_set = tf.contrib.image.rotate(img_tar_set, rnd_theta)
-        crop_size = int(self.read_image_h * ((np.cos(rnd_theta)/(np.sin(rnd_theta)+np.cos(rnd_theta)))**2))
+        abs_theta = np.absolute(rnd_theta)
+        crop_size = int(self.read_image_h * ((np.cos(abs_theta)/(np.sin(abs_theta)+np.cos(abs_theta)))**2))
         img_tar_set = tf.image.resize_image_with_crop_or_pad(img_tar_set, crop_size, crop_size)
         img_tar_set = tf.random_crop(img_tar_set, [self.image_h, self.image_w, 4])
         img, tar = tf.split(img_tar_set, [3, 1], 2)
