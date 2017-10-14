@@ -11,8 +11,8 @@ from ops import *
 from utils import *
 
 class dganet(object):
-    def __init__(self, sess, image_h=128, image_w=128, batch_size=10,
-            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, beta1=0.5, beta2=0.999, reg_scale=0., alpha=0.5, gp_scale=10., h_scale=5e+2,
+    def __init__(self, sess, image_h=128, image_w=128, batch_size=4,
+            input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, beta1=0.5, beta2=0.999, reg_scale=0., alpha=0.5, gp_scale=10., h_scale=1e+3,
             g_dim=64, d_dim=64, K=10., critic_k=1, keep_prob=0.5, noise_std=0.,
             dataset_path=None, checkpoint_dir=None, outdata_dir=None, summary_dir=None):
 
@@ -20,7 +20,7 @@ class dganet(object):
         self.batch_size = batch_size
         self.image_h = image_h
         self.image_w = image_w
-        self.read_image_h, self.read_image_w = (170, 170)
+        self.read_image_h, self.read_image_w = (300, 300)
         self.image_size = self.image_h * self.image_w
         self.input_ch = input_ch
         self.output_ch = output_ch
@@ -135,10 +135,6 @@ class dganet(object):
         
         [tf.summary.histogram(var.name, var, collections=['train']) for var in t_vars if (('w' in var.name) or ('bn' in var.name))]
 
-        self.images = gen_image(self.y)
-        self.in_image = gen_image(dict(zip(range(0,9), [self.x_in])))
-        self.tar_image = gen_image(dict(zip(range(0,9), [gray_to_rgb(self.y_tar)])))
-
         self.train_merged = tf.summary.merge_all(key='train')
         self.test_merged = tf.summary.merge_all(key='test')
         self.merged = tf.summary.merge_all()
@@ -220,13 +216,6 @@ class dganet(object):
         #self.load_model("dganet_e00502.model")
         batch_size = self.batch_size
         
-        # save input & target image
-        in_img = self.sess.run(self.in_image[0], {self.x: self.test_image[:batch_size]})
-        with open(self.outdata_dir+"/init"+"/input.png", 'wb') as f:
-            f.write(in_img)
-        tar_img = self.sess.run(self.tar_image[0], {self.y_: self.test_depth[:batch_size]})
-        with open(self.outdata_dir+"/init"+"/target.png", 'wb') as f:
-            f.write(tar_img)
         
         for epoch in range(train_epoch):
 
@@ -257,7 +246,7 @@ class dganet(object):
                     losses = self.sess.run([self.loss, self.RMS_loss, self.REL_loss, self.Log10_loss], feed_dict = test_feed)
                     losses_list.append(losses)
                 vl, rms, rel, log10 = (np.asarray(loss).mean() for loss in list(zip(*losses_list)))
-                test_feed = {self.x: self.test_image[t_perm[:10]], self.y_: self.test_depth[t_perm[:10]], self.training: False}
+                test_feed = {self.x: self.test_image[t_perm[:batch_size]], self.y_: self.test_depth[t_perm[:batch_size]], self.training: False}
                 test_summary = self.sess.run(self.test_merged, feed_dict = test_feed)
                 self.test_writer.add_summary(test_summary, epoch)
                 
@@ -272,16 +261,6 @@ class dganet(object):
                 print("train_loss : %.10f"% l)
                 print("")
 
-                """ 
-                # save image
-                for j in range(len(self.image_keys)):
-                    img = self.sess.run(self.images[self.image_keys[j]], {self.x: self.test_image[:10], self.y_: self.test_depth[:10], self.test: False})
-                    out_dir = os.path.join(self.outdata_dir , self.image_keys[j])
-                    if not os.path.exists(out_dir):
-                        os.makedirs(out_dir)
-                    with open( os.path.join(out_dir, "result_e%05d.png" % int(epoch)),'wb') as f:
-                        f.write(img)
-                """ 
             if epoch % 100 == 2:
                 self.save_model(epoch)
     
@@ -327,6 +306,7 @@ class dganet(object):
         abs_theta = np.absolute(rnd_theta)
         crop_size = int(self.read_image_h * ((np.cos(abs_theta)/(np.sin(abs_theta)+np.cos(abs_theta)))**2))
         img_tar_set = tf.image.resize_image_with_crop_or_pad(img_tar_set, crop_size, crop_size)
+        img_tar_set = tf.image.resize_images(img_tar_set, [int(self.image_h*1.1), int(self.image_w*1.1)])
         img_tar_set = tf.random_crop(img_tar_set, [self.image_h, self.image_w, 4])
         img, tar = tf.split(img_tar_set, [3, 1], 2)
         return img, tar
