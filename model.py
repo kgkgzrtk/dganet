@@ -13,7 +13,7 @@ from utils import *
 class dganet(object):
     def __init__(self, sess, image_h=160, image_w=213, batch_size=4,
             input_ch=3, output_ch=1, g_lr=1e-4, d_lr=1e-4, beta1=0.5, beta2=0.999,
-            reg_scale=0., alpha=0.5, gp_scale=10., L_scale=5e+3, G_scale=20., H_scale=1e+1,
+            reg_scale=0., alpha=0.5, gp_scale=10., L_scale=2e+4, G_scale=1e+2, H_scale=1e+1,
             g_dim=64, d_dim=64, critic_k=1, keep_prob=0.5, noise_std=0.,
             rotation=10., crop_scale=[1.0, 1.5], col_scale=[0.8, 1.2], bright_scale=[0.7, 1.3],
             dataset_path=None, checkpoint_dir=None, outdata_dir=None, summary_dir=None):
@@ -161,7 +161,7 @@ class dganet(object):
             #depth = gaussian_noise_layer(depth, std=self.noise_std)
             input_ = tf.concat([image, depth],3)
 
-            h0 = lrelu(conv(input_, dim, k=2, stddev=stddev, bn=False, name='h0_conv'))
+            h0 = lrelu(conv(input_, dim, c=6, k=2, stddev=stddev, bn=False, name='h0_conv'))
             h1 = lrelu(conv(h0, dim*2, k=2, stddev=stddev, bn=False, name='h1_conv'))
             h2 = lrelu(conv(h1, dim*4, k=2, stddev=stddev, bn=False, name='h2_conv'))
             h3 = lrelu(conv(h2, dim*8, k=2, stddev=stddev, bn=False, name='h3_conv'))
@@ -180,7 +180,7 @@ class dganet(object):
             
             #convolutional layers
             
-            y_c0 = conv(input_, dim, c=4, k=2, name='c0', bn=False)
+            y_c0 = conv(input_, dim, c=6, k=2, name='c0', bn=False)
             y_c1 = conv(lrelu(y_c0), dim * 2, k=2, name='c1')
             y_c2 = conv(lrelu(y_c1), dim * 4, k=2, name='c2')
             y_c3 = conv(lrelu(y_c2), dim * 8, k=2, name='c3')
