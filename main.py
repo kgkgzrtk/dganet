@@ -11,9 +11,10 @@ def main(_):
     config.gpu_options.allow_growth=True
     with tf.Session(config=config) as sess:
         model = dganet(sess, dataset_path=DATASET_PATH, checkpoint_dir=CHECKPOINT_DIR, outdata_dir=OUTDATA_DIR, summary_dir=SUMMARY_DIR)
-        model.train(train_epoch=1800)
-        #model.draw_depth('./data/display/oyaken_chair.png')
-        #save_path = saver.save(sess, "dganet_I-O_128.model")
+        model.train(train_epoch=5000)
+        #model.load_model('uw-gan-gp_e01302.model')
+        #model.gen_depth('./data/display/01depth')
+        save_path = saver.save(sess, "view.model")
         sess.close() 
 
 if __name__ == '__main__':
